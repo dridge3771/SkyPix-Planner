@@ -65,6 +65,47 @@
 
 ---
 
+## Lunar Occlusion, Zenith Obstruction, and Horizon Limits — Design Conclusions
+
+### 1. Lunar Occlusion Calculations (Practical Approach)
+- Lunar occlusion warnings are based on a user-specified lunar avoidance angle, typically 10–20° (with 20° being common).
+- The Moon's position (RA/Dec) and the object's RA/Dec are used to compute true angular separation at key times (e.g., object transit, or at nightly intervals).
+- Atmospheric conditions (such as high clouds) broaden the effective area influenced by the Moon, so the warning is intentionally approximate.
+- The goal is to advise the user: "Avoid this night for this object," rather than provide fine-grained time estimates.
+
+### 2. Rig-Dependence and Constraints
+- Occlusion calculations are **rig-dependent**:
+  - Each rig has a unique location (latitude/longitude) affecting sky coordinates and Moon/object visibility.
+  - Each rig has its own horizon profile (altitude limits by azimuth), determined by its site environment (trees, buildings, terrain, etc.).
+  - Each rig has its own zenith obstruction profile, determined solely by hardware (mount, tripod, imaging assembly).
+  - The lunar avoidance angle is user-configurable per rig and can vary.
+
+- **Zenith obstruction** is solely hardware-dependent and represents sky regions near the zenith that the rig cannot access due to physical or mechanical limits. It may geometrically intersect the landscape horizon (e.g., overhanging trees above the rig), but remains a distinct mask from the environmental horizon.
+
+- **Landscape horizon** is environmental and site-specific, determined by features such as trees, buildings, and terrain, and describes the lowest altitude above the horizon that is observable.
+
+- The planner must treat these two constraints separately and combine them to determine the actual observable sky for occlusion and eligibility calculations.
+
+### 3. Tabulation and Approximations
+- Nightly occlusion warnings are tabulated for each (rig, object, date, avoidance angle). Minute-by-minute or hour-by-hour calculations are not required.
+- For each night, if the Moon is within the avoidance angle of the object during any part of the observable window, that night is flagged as “occluded” (avoid for that object).
+- RA and Dec are both used to calculate true angular separation; declination-dependent scaling of RA (cos(Dec)) is incorporated for practical tabulation.
+- The warning system is designed for efficiency and realistic user expectations, not absolute mathematical precision.
+
+### 4. Implementation Notes
+- The Rig Kit must store, for each rig:
+  - Horizon profile (altitude by azimuth)
+  - Zenith obstruction profile
+  - Lunar avoidance angle
+  - Geographic location
+- The precomputation of lunar occlusion must use all these constraints to generate accurate lookup tables for each rig/object/date combination.
+
+---
+
+*This design enables the SkyPix Planner to deliver accurate, practical lunar occlusion warnings and eligibility calculations, supporting multi-rig, multi-object, multi-filter planning in real-world observing scenarios.*
+
+---
+
 ## UI/UX Decisions
 
 - Planner is a visual, interactive sheet with minimal clutter.
