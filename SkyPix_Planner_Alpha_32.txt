@@ -3443,7 +3443,7 @@ function recolorFilterKitBands_(sh) {
   if (eligHeaderRow) sh.getRange(eligHeaderRow, 1).setBackground(hpcShade(hpc, 40));
   if (curveHeaderRow) sh.getRange(curveHeaderRow, 1).setBackground(hpcShade(hpc, 40));
 
-  sh.getRange('A4:A14').setHorizontalAlignment('left').setVerticalAlignment('middle').setWrap(true);
+  sh.getRange('A4:A15').setHorizontalAlignment('left').setVerticalAlignment('middle').setWrap(true);
   sh.getRange(1, 1, sh.getFrozenRows(), width).setBorder(true, true, true, true, null, true, hpcShade(hpc, 40), SpreadsheetApp.BorderStyle.SOLID);
   writeRefreshLabel_(sh, REFRESH_NEUTRAL_BG, ['Refresh Planner', 'Cancel']);
 }
