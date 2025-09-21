@@ -3226,10 +3226,10 @@ function camerakit_normalizeNow_() {
 
 /* ======================= FILTER KIT ======================= */
 
-var FK = { NAME: 'Filter Kit', HIGHLIGHT_COLOR_LABEL: 'Filter Highlight Color', BAND_ID_LABEL: 'Band ID', ROWS: { ADD: 3, MODEL: 4, BAND_ID: 5, BANDWIDTH: 6, PEAK: 7, CWL: 8, HALO: 9, REJECTION: 10, THICKNESS: 11, SUBSTRATE: 12, COLOR: 13, ACK: 14 }};
+var FK = { NAME: 'Filter Kit', HIGHLIGHT_COLOR_LABEL: 'Filter Highlight Color', BAND_ID_LABEL: 'Band ID', ROWS: { ADD: 3, MODEL: 4, BAND_ID: 5, BANDWIDTH: 6, PEAK: 7, CWL: 8, HALO: 9, REJECTION: 10, FILTER_SIZE: 11, THICKNESS: 12, SUBSTRATE: 13, COLOR: 14, ACK: 15 }};
 const FILTER_BAND_TYPES = ['Ha', 'SII', 'OIII', 'NII', 'Hb', 'L', 'R', 'G', 'B', 'Mg'];
 const DROPDOWN_PADDING = ' '.repeat(6);
-const FILTER_DEFAULTS = { Ha: { bandwidth: 6, peak: 95, cwl: 656, halo: 'Good', rejection: 4, thickness: 3, substrate: 'N/A' }, SII: { bandwidth: 6, peak: 95, cwl: 672, halo: 'Good', rejection: 4, thickness: 3, substrate: 'N/A' }, OIII: { bandwidth: 6, peak: 95, cwl: 501, halo: 'Good', rejection: 4, thickness: 3, substrate: 'N/A' }, NII: { bandwidth: 3, peak: 95, cwl: 658, halo: 'Good', rejection: 4, thickness: 3, substrate: 'N/A' }, Hb: { bandwidth: 8, peak: 95, cwl: 486, halo: 'Good', rejection: 4, thickness: 3, substrate: 'N/A' }, L: { bandwidth: 300, peak: 95, cwl: 550, halo: 'Good', rejection: 4, thickness: 3, substrate: 'N/A' }, R: { bandwidth: 100, peak: 95, cwl: 620, halo: 'Good', rejection: 4, thickness: 3, substrate: 'N/A' }, G: { bandwidth: 100, peak: 95, cwl: 540, halo: 'Good', rejection: 4, thickness: 3, substrate: 'N/A' }, B: { bandwidth: 100, peak: 95, cwl: 470, halo: 'Good', rejection: 4, thickness: 3, substrate: 'N/A' }, Mg: { bandwidth: 10, peak: 90, cwl: 280, halo: 'Good', rejection: 4, thickness: 3, substrate: 'N/A' }};
+const FILTER_DEFAULTS = { Ha: { bandwidth: 6, peak: 95, cwl: 656, halo: 'Good', rejection: 4, filterSize: '1.25"', thickness: 3, substrate: 'N/A' }, SII: { bandwidth: 6, peak: 95, cwl: 672, halo: 'Good', rejection: 4, filterSize: '1.25"', thickness: 3, substrate: 'N/A' }, OIII: { bandwidth: 6, peak: 95, cwl: 501, halo: 'Good', rejection: 4, filterSize: '1.25"', thickness: 3, substrate: 'N/A' }, NII: { bandwidth: 3, peak: 95, cwl: 658, halo: 'Good', rejection: 4, filterSize: '1.25"', thickness: 3, substrate: 'N/A' }, Hb: { bandwidth: 8, peak: 95, cwl: 486, halo: 'Good', rejection: 4, filterSize: '1.25"', thickness: 3, substrate: 'N/A' }, L: { bandwidth: 300, peak: 95, cwl: 550, halo: 'Good', rejection: 4, filterSize: '1.25"', thickness: 3, substrate: 'N/A' }, R: { bandwidth: 100, peak: 95, cwl: 620, halo: 'Good', rejection: 4, filterSize: '1.25"', thickness: 3, substrate: 'N/A' }, G: { bandwidth: 100, peak: 95, cwl: 540, halo: 'Good', rejection: 4, filterSize: '1.25"', thickness: 3, substrate: 'N/A' }, B: { bandwidth: 100, peak: 95, cwl: 470, halo: 'Good', rejection: 4, filterSize: '1.25"', thickness: 3, substrate: 'N/A' }, Mg: { bandwidth: 10, peak: 90, cwl: 280, halo: 'Good', rejection: 4, filterSize: '1.25"', thickness: 3, substrate: 'N/A' }};
 const TRANSMISSION_CURVE_DEFAULTS = { 'Ha': [[653, 5], [654, 30], [656, 96], [658, 30], [659, 5]], 'SII': [[669, 5], [670, 30], [672, 95], [674, 30], [675, 5]], 'OIII': [[498, 5], [499, 30], [501, 95], [503, 30], [504, 5]], 'NII': [[655, 5], [656, 30], [658, 95], [660, 30], [661, 5]], 'Hb': [[483, 5], [484, 30], [486, 95], [488, 30], [489, 5]], 'L': [[420, 92], [450, 95], [550, 96], [650, 95], [680, 92]], 'R': [[590, 5], [610, 95], [680, 95], [700, 5]], 'G': [[490, 5], [510, 95], [580, 95], [600, 5]], 'B': [[400, 5], [420, 95], [490, 95], [510, 5]], 'Mg': [[277, 5], [278, 30], [280, 90], [282, 30], [283, 5]]};
 
 function buildFilterKit_(ss) {
@@ -3249,9 +3249,10 @@ function buildFilterKit_(ss) {
   sh.getRange('A8').setValue('Center Wavelength (nm)').setWrap(true);
   sh.getRange('A9').setValue('Halo Performance').setWrap(true);
   sh.getRange('A10').setValue('Off-band Rejection (OD)').setWrap(true);
-  sh.getRange('A11').setValue('Parfocal Thickness (mm)').setWrap(true);
-  sh.getRange('A12').setValue('Glass Substrate').setWrap(true);
-  sh.getRange('A13').setValue(FK.HIGHLIGHT_COLOR_LABEL).setWrap(true);
+  sh.getRange('A11').setValue('Filter Size (inch)').setWrap(true);
+  sh.getRange('A12').setValue('Parfocal Thickness (mm)').setWrap(true);
+  sh.getRange('A13').setValue('Glass Substrate').setWrap(true);
+  sh.getRange('A14').setValue(FK.HIGHLIGHT_COLOR_LABEL).setWrap(true);
   
   sh.getRange(FK.ROWS.ADD, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(['Add 1-band Filter', 'Add 2-band Filter', 'Add 3-band Filter', 'Add 4-band Filter', 'Cancel'], true).setAllowInvalid(true).build());
   writeRefreshLabel_(SpreadsheetApp.getActive().getSheetByName('Filter Kit'), REFRESH_NEUTRAL_BG, REFRESH_CHOICES_FILTER);
@@ -3278,7 +3279,7 @@ function SkyPix_AddFilter_(command) {
   const headerRange = sh.getRange(FK.ROWS.ADD, startCol, 1, numCols);
   center_(headerRange.merge()).setValue(`Filter ${filterNum}`).setFontWeight('bold').setFontSize(12).setNumberFormat('@').clearDataValidations();
   
-  [FK.ROWS.MODEL, FK.ROWS.HALO, FK.ROWS.REJECTION, FK.ROWS.THICKNESS, FK.ROWS.SUBSTRATE, FK.ROWS.COLOR].forEach(row => {
+  [FK.ROWS.MODEL, FK.ROWS.HALO, FK.ROWS.REJECTION, FK.ROWS.FILTER_SIZE, FK.ROWS.THICKNESS, FK.ROWS.SUBSTRATE, FK.ROWS.COLOR].forEach(row => {
     sh.getRange(row, startCol, 1, numCols).merge().setBackground(WARN_ORANGE).setHorizontalAlignment('center').setVerticalAlignment('middle');
   });
 
@@ -3299,6 +3300,7 @@ function SkyPix_AddFilter_(command) {
   if (firstBandDefaults) {
     sh.getRange(FK.ROWS.HALO, startCol).setValue(DROPDOWN_PADDING + firstBandDefaults.halo);
     sh.getRange(FK.ROWS.REJECTION, startCol).setValue(firstBandDefaults.rejection);
+    sh.getRange(FK.ROWS.FILTER_SIZE, startCol).setValue(firstBandDefaults.filterSize);
     sh.getRange(FK.ROWS.THICKNESS, startCol).setValue(firstBandDefaults.thickness);
     sh.getRange(FK.ROWS.SUBSTRATE, startCol).setValue(firstBandDefaults.substrate);
   }
@@ -3343,10 +3345,14 @@ function rebuildFilterKitLayout_() {
   rebuildTransmissionCurve_(sh, curveHeaderRow, filterBlocks);
 
   filterBlocks.forEach(block => {
-    for (let i = 0; i < (block.width / 2); i++) {
-      const bandCol = block.startCol + (i * 2);
-      const bandType = sh.getRange(FK.ROWS.BAND_ID, bandCol).getDisplayValue().trim();
-      if (bandType) populateTransmissionCurve_(sh, bandCol, bandType);
+    // Check if this filter block is acknowledged before populating transmission curves
+    const isAcknowledged = sh.getRange(FK.ROWS.ACK, block.startCol).getValue();
+    if (!isAcknowledged) {
+      for (let i = 0; i < (block.width / 2); i++) {
+        const bandCol = block.startCol + (i * 2);
+        const bandType = sh.getRange(FK.ROWS.BAND_ID, bandCol).getDisplayValue().trim();
+        if (bandType) populateTransmissionCurve_(sh, bandCol, bandType);
+      }
     }
   });
 
