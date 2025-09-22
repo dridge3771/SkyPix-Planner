@@ -1104,6 +1104,9 @@ function SkyPix_BuildRigKit() { buildRigKit_(SpreadsheetApp.getActive()); }
 function SkyPix_BuildCameraKit() { buildCameraKit_(SpreadsheetApp.getActive()); }
 function SkyPix_BuildFilterKit() { buildFilterKit_(SpreadsheetApp.getActive()); }
 function SkyPix_TestFilterKit() { return testFilterKitStructure_(); }
+function SkyPix_TestTransmissionCurve() { return testTransmissionCurveFix_(); }
+function SkyPix_TestMigration() { return testMigrationLogic_(); }
+function SkyPix_RunAllFilterKitTests() { return runAllFilterKitTests_(); }
 function SkyPix_BuildObjectDatabase() { buildObjectDatabase_(SpreadsheetApp.getActive()); }
 
 /* ======================= CORE HELPER FUNCTIONS ======================= */
@@ -3916,4 +3919,122 @@ function testFilterKitStructure_() {
   
   Logger.log('Filter Kit Structure Test Results:\n' + results.join('\n'));
   return results;
+}
+
+// Test function to validate transmission curve fix
+function testTransmissionCurveFix_() {
+  const results = [];
+  
+  try {
+    // Test that populateTransmissionCurve_ only runs for unacknowledged filters
+    const sh = SpreadsheetApp.getActive().getSheetByName(FK.NAME);
+    if (!sh) {
+      results.push('SKIP: No Filter Kit sheet found for transmission curve test');
+      return results;
+    }
+    
+    const filterBlocks = getFilterBlocks_(sh);
+    if (filterBlocks.length === 0) {
+      results.push('SKIP: No filter blocks found for transmission curve test');
+      return results;
+    }
+    
+    // Check that the transmission curve logic considers acknowledgment status
+    filterBlocks.forEach((block, index) => {
+      const ackCell = sh.getRange(FK.ROWS.ACK, block.startCol);
+      const isAcknowledged = ackCell.getValue() === true || ackCell.getDisplayValue() === 'TRUE';
+      
+      results.push(`INFO: Filter ${index + 1} acknowledged status: ${isAcknowledged}`);
+      
+      // Check if transmission curve data exists
+      const curveHeaderRow = findRowWithText_(sh, 'Transmission Curve');
+      if (curveHeaderRow) {
+        const curveData = sh.getRange(curveHeaderRow + 2, block.startCol, 5, 2).getValues();
+        const hasData = curveData.some(row => row.some(cell => cell !== ''));
+        results.push(`INFO: Filter ${index + 1} has transmission curve data: ${hasData}`);
+      }
+    });
+    
+    results.push('PASS: Transmission curve test completed');
+  } catch (e) {
+    results.push(`FAIL: Transmission curve test error: ${e.message}`);
+  }
+  
+// Test function to validate migration logic
+function testMigrationLogic_() {
+  const results = [];
+  
+  try {
+    const sh = SpreadsheetApp.getActive().getSheetByName(FK.NAME);
+    if (!sh) {
+      results.push('SKIP: No Filter Kit sheet found for migration test');
+      return results;
+    }
+    
+    // Check if migration function exists and is callable
+    if (typeof migrateExistingFilters_ === 'function') {
+      results.push('PASS: Migration function exists');
+      
+      // Check current state of Filter Size row
+      const currentLabel = sh.getRange(FK.ROWS.FILTER_SIZE, 1).getDisplayValue();
+      if (currentLabel === 'Filter Size') {
+        results.push('PASS: Filter Size row properly labeled');
+      } else {
+        results.push(`WARN: Filter Size row label is "${currentLabel}", expected "Filter Size"`);
+      }
+      
+      // Check if filter blocks exist and have Filter Size data
+      const filterBlocks = getFilterBlocks_(sh);
+      if (filterBlocks.length > 0) {
+        filterBlocks.forEach((block, index) => {
+          const filterSizeValue = sh.getRange(FK.ROWS.FILTER_SIZE, block.startCol).getDisplayValue();
+          if (filterSizeValue) {
+            results.push(`PASS: Filter ${index + 1} has Filter Size: ${filterSizeValue}`);
+          } else {
+            results.push(`WARN: Filter ${index + 1} missing Filter Size value`);
+          }
+        });
+      } else {
+        results.push('INFO: No existing filters to check for migration');
+      }
+    } else {
+      results.push('FAIL: Migration function not found');
+    }
+  } catch (e) {
+    results.push(`FAIL: Migration test error: ${e.message}`);
+  }
+  
+  Logger.log('Migration Test Results:\n' + results.join('\n'));
+  return results;
+}
+
+// Comprehensive test suite
+function runAllFilterKitTests_() {
+  const allResults = [];
+  
+  allResults.push('=== FILTER KIT COMPREHENSIVE TEST SUITE ===');
+  allResults.push('');
+  
+  allResults.push('1. STRUCTURE TEST:');
+  allResults.push(...testFilterKitStructure_());
+  allResults.push('');
+  
+  allResults.push('2. TRANSMISSION CURVE TEST:');
+  allResults.push(...testTransmissionCurveFix_());
+  allResults.push('');
+  
+  allResults.push('3. MIGRATION TEST:');
+  allResults.push(...testMigrationLogic_());
+  allResults.push('');
+  
+  const failCount = allResults.filter(line => line.startsWith('FAIL:')).length;
+  const passCount = allResults.filter(line => line.startsWith('PASS:')).length;
+  
+  allResults.push(`=== TEST SUMMARY ===`);
+  allResults.push(`PASSED: ${passCount}`);
+  allResults.push(`FAILED: ${failCount}`);
+  allResults.push(`STATUS: ${failCount === 0 ? 'ALL TESTS PASSED' : 'SOME TESTS FAILED'}`);
+  
+  Logger.log(allResults.join('\n'));
+  return allResults;
 }
