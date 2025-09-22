@@ -1103,6 +1103,7 @@ function SkyPix_BuildSetup() { buildSetup_(SpreadsheetApp.getActive()); }
 function SkyPix_BuildRigKit() { buildRigKit_(SpreadsheetApp.getActive()); }
 function SkyPix_BuildCameraKit() { buildCameraKit_(SpreadsheetApp.getActive()); }
 function SkyPix_BuildFilterKit() { buildFilterKit_(SpreadsheetApp.getActive()); }
+function SkyPix_TestFilterKit() { return testFilterKitStructure_(); }
 function SkyPix_BuildObjectDatabase() { buildObjectDatabase_(SpreadsheetApp.getActive()); }
 
 /* ======================= CORE HELPER FUNCTIONS ======================= */
@@ -3447,7 +3448,7 @@ function recolorFilterKitBands_(sh) {
   if (eligHeaderRow) sh.getRange(eligHeaderRow, 1).setBackground(hpcShade(hpc, 40));
   if (curveHeaderRow) sh.getRange(curveHeaderRow, 1).setBackground(hpcShade(hpc, 40));
 
-  sh.getRange('A4:A14').setHorizontalAlignment('left').setVerticalAlignment('middle').setWrap(true);
+  sh.getRange('A4:A15').setHorizontalAlignment('left').setVerticalAlignment('middle').setWrap(true);
   sh.getRange(1, 1, sh.getFrozenRows(), width).setBorder(true, true, true, true, null, true, hpcShade(hpc, 40), SpreadsheetApp.BorderStyle.SOLID);
   writeRefreshLabel_(sh, REFRESH_NEUTRAL_BG, ['Refresh Planner', 'Cancel']);
 }
@@ -3883,4 +3884,36 @@ function filter_autoPatch_() {
     const blocks = getFilterBlocks_(sh); // existing helper in your code
     rebuildRigEligibility_Filter_(rigData, blocks);
   } catch (_) {}
+}
+
+// Test function to validate Filter Kit structure
+function testFilterKitStructure_() {
+  const results = [];
+  
+  // Test FK.ROWS structure
+  const expectedRows = {
+    ADD: 3, MODEL: 4, BAND_ID: 5, BANDWIDTH: 6, PEAK: 7, CWL: 8, 
+    FILTER_SIZE: 9, HALO: 10, REJECTION: 11, THICKNESS: 12, 
+    SUBSTRATE: 13, COLOR: 14, ACK: 15
+  };
+  
+  for (const [key, value] of Object.entries(expectedRows)) {
+    if (FK.ROWS[key] !== value) {
+      results.push(`FAIL: FK.ROWS.${key} should be ${value}, got ${FK.ROWS[key]}`);
+    } else {
+      results.push(`PASS: FK.ROWS.${key} = ${value}`);
+    }
+  }
+  
+  // Test Filter Defaults include filterSize
+  for (const [band, defaults] of Object.entries(FILTER_DEFAULTS)) {
+    if (!defaults.filterSize) {
+      results.push(`FAIL: ${band} missing filterSize in defaults`);
+    } else {
+      results.push(`PASS: ${band} has filterSize: ${defaults.filterSize}`);
+    }
+  }
+  
+  Logger.log('Filter Kit Structure Test Results:\n' + results.join('\n'));
+  return results;
 }
