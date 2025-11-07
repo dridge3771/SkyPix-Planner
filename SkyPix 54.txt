@@ -89,6 +89,14 @@ function run_fix_zenith_landscape_() {
 // --- Bootstrap guard so early code can safely read FK.NAME even before FK is defined.
 var FK = (typeof FK !== 'undefined') ? FK : { NAME: 'Filter Kit' };
 
+// --- Bootstrap guard for Camera Kit (CK) to prevent early reference errors.
+// This ensures CK has a minimal structure before the full definition loads later.
+var CK = (typeof CK !== 'undefined') ? CK : {
+  NAME: 'Camera Kit',
+  ROWS: { COLOR: 13, ACK: 15 },
+  BAND_ID_LABEL: 'Band ID'
+};
+
 function deleteAllSkyPixSheets_() {
   const ui = SpreadsheetApp.getUi();
   const response = ui.alert('Are you sure you want to permanently delete all SkyPix Planner sheets?', ui.ButtonSet.YES_NO);
@@ -158,19 +166,25 @@ function SkyPix_EnableOnEdit_() {
 }
 
 /* ======================= ON EDIT DISPATCHER ======================= */
-function onEditTrigger(e) {
-  const scriptLock = LockService.getScriptLock();
-  const hasLock = scriptLock.tryLock(15000);
-  if (!hasLock) return;
-  try {
-    logDebug_(`EDIT on ${e.range.getSheet().getName()}@${e.range.getA1Notation()} | Value: ${e.value}`);
-    SkyPix_DispatchOnChange_(e);
-  } catch (err) {
-    logDebug_('CRITICAL ERROR in onEditTrigger: ' + err.stack);
-  } finally {
-    scriptLock.releaseLock();
-  }
-}
+/* ===== DUPLICATE onEditTrigger (OLD) — commented out by dridge3771 2025-11-07 =====
+   This duplicate definition was removed to prevent ReferenceErrors.
+   The canonical onEditTrigger is defined earlier in the file (around line 113).
+
+// function onEditTrigger(e) {
+//   const scriptLock = LockService.getScriptLock();
+//   const hasLock = scriptLock.tryLock(15000);
+//   if (!hasLock) return;
+//   try {
+//     logDebug_(`EDIT on ${e.range.getSheet().getName()}@${e.range.getA1Notation()} | Value: ${e.value}`);
+//     SkyPix_DispatchOnChange_(e);
+//   } catch (err) {
+//     logDebug_('CRITICAL ERROR in onEditTrigger: ' + err.stack);
+//   } finally {
+//     scriptLock.releaseLock();
+//   }
+// }
+
+   ===== END DUPLICATE onEditTrigger ===== */
 
 
 function SkyPix_DispatchOnChange_(e) {
@@ -861,19 +875,25 @@ function SkyPix_Debug_ListTriggers_() {
   Logger.log(lines.join('\n') || 'No triggers found');
 }
 
-function onEditTrigger(e) {
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) return;
-  try {
-    if (!e || !e.range) { Logger.log('onEditTrigger called without event; ignoring.'); return; }
-    logDebug_(`EDIT on ${e.range.getSheet().getName()}@${e.range.getA1Notation()} | Value: ${e.value}`);
-    SkyPix_DispatchOnChange_(e);
-  } catch (err) {
-    logDebug_('CRITICAL ERROR in onEditTrigger: ' + err.stack);
-  } finally {
-    lock.releaseLock();
-  }
-}
+/* ===== DUPLICATE onEditTrigger (OLD) — commented out by dridge3771 2025-11-07 =====
+   This duplicate definition was removed to prevent ReferenceErrors.
+   The canonical onEditTrigger is defined earlier in the file (around line 113).
+
+// function onEditTrigger(e) {
+//   const lock = LockService.getScriptLock();
+//   if (!lock.tryLock(15000)) return;
+//   try {
+//     if (!e || !e.range) { Logger.log('onEditTrigger called without event; ignoring.'); return; }
+//     logDebug_(`EDIT on ${e.range.getSheet().getName()}@${e.range.getA1Notation()} | Value: ${e.value}`);
+//     SkyPix_DispatchOnChange_(e);
+//   } catch (err) {
+//     logDebug_('CRITICAL ERROR in onEditTrigger: ' + err.stack);
+//   } finally {
+//     lock.releaseLock();
+//   }
+// }
+
+   ===== END DUPLICATE onEditTrigger ===== */
 
 function RK_acknowledgeDefaults_(sh, col) {
   // Both columns in the pair: col and col+1
@@ -3094,11 +3114,21 @@ function buildRigKit_(ss) {
   writeRefreshLabel_(sh, REFRESH_NEUTRAL_BG, REFRESH_CHOICES_RIG);
 }
 
-/* ==== BEGIN Camera Kit (Phase 2) Module — v15 (between Rig and Filter) ==== */
 
-/************************************************************
+/* ===== DUPLICATE Camera Kit (OLD) — commented out by dridge3771 2025-11-07 =====
+   This duplicate Camera Kit definition causes ReferenceErrors when both definitions
+   are active. The later Phase-2 Camera Kit (starting below) is the
+   canonical, syntax-safe version and should remain active.
+   
+   Original block preserved below for reference and rollback purposes.
+   ===== BEGIN COMMENTED OUT BLOCK ===== */
+
+/*
+/~* ==== BEGIN Camera Kit (Phase 2) Module — v15 (between Rig and Filter) ==== *~/
+
+/~************************************************************
  * Camera Kit — Phase 2 Module (corrected v15)
- ************************************************************/
+ ************************************************************~/
 var CK = (typeof CK === 'object') ? CK : {};
 CK.NAME = CK.NAME || 'Camera Kit';
 CK.ROWS = CK.ROWS || { TITLE:1, REFRESH:2, HEADERS:3, CAMERA_MODEL:4, SENSOR_MODEL:5, PIXEL_SIZE:6, SENSOR_SIZE:7, COOL_DELTA:8, UNITY_GAIN:9, READ_NOISE:10, DARK_CURRENT:11, FWC:12, COLOR:13, ACK:14, SPACER_1:15, QE_HDR:16, QE_L_EDGE:17, QE_L_INF:18, QE_PEAK:19, QE_U_INF:20, QE_U_EDGE:21, SPACER_2:22, RIG_HDR:23, RIG_FIRST:24 };
@@ -3321,7 +3351,10 @@ function SkyPix_AddCamera_(){
   ck_paintMissingYellow_(sh);
 }
 
-/* ==== END Camera Kit (Phase 2) Module ==== */
+/~* ==== END Camera Kit (Phase 2) Module ==== *~/
+*/
+
+/* ===== END DUPLICATE CAMERA KIT ===== */
 
 
 
