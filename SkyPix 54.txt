@@ -121,12 +121,12 @@ function onEditTrigger(e) {
     }
     logDebug_(`EDIT on ${e.range.getSheet().getName()}@${e.range.getA1Notation()} | Value: ${e.value}`);
     SkyPix_DispatchOnChange_(e);
+    camerakit_handleColorPicker_(e);
   } catch (err) {
     logDebug_('CRITICAL ERROR in onEditTrigger: ' + err.stack);
   } finally {
     lock.releaseLock();
   }
-  camerakit_handleColorPicker_(e);
 }
 
 
