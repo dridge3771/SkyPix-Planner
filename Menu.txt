@@ -1,0 +1,132 @@
+// ===== PASTE THIS ENTIRE BLOCK INTO YOUR "Menu.gs" FILE =====
+// ===== (This replaces everything currently in that file) =====
+
+/**
+ * Creates the SkyPix Planner menu when the spreadsheet is opened.
+ * This is the full menu structure from Alpha 54,
+ * but corrected to call the new standardized build functions.
+ */
+function onOpen() {
+  const ui = SpreadsheetApp.getUi();
+  const menu = ui.createMenu('SkyPix Planner');
+
+  menu.addItem('Build All', 'SkyPix_BuildAll');
+
+  const buildSubMenu = ui.createMenu('Build Individual Sheets')
+    .addItem('Build Object Entry', 'SkyPix_BuildObjectEntry')
+    .addItem('Build Setup', 'SkyPix_BuildSetup')
+    .addItem('Build Rig Kit', 'SkyPix_BuildRigKit')
+    .addItem('Build Camera Kit', 'SkyPix_BuildCameraKit') // This now points to the correct function
+    .addItem('Build Filter Kit', 'SkyPix_BuildFilterKit')
+    .addItem('Build Object Database', 'SkyPix_BuildObjectDatabase');
+  menu.addSubMenu(buildSubMenu);
+
+  const toolsSubMenu = ui.createMenu('Tools')
+    .addItem('Find Location by Address...', 'showLocationFinder')
+    .addItem('Add 25 Object Rows', 'SkyPix_AddObjects_')
+    .addItem('Test Object Lookup (active row)', 'SkyPix_Debug_TestObjectFetch_');
+  menu.addSubMenu(toolsSubMenu);
+
+  const adminSubMenu = ui.createMenu('Admin')
+    .addItem('Set API Keys...', 'showApiKeysDialog_')
+    .addItem('Authorize Script (First-Time Use)', 'SkyPix_Authorize_')
+    .addSeparator()
+    .addItem('Set API Keys (Manual)', 'setApiKeysManually')
+    .addItem('Enable onEdit Trigger', 'SkyPix_EnableOnEdit_')
+    .addItem('!!! Delete All Sheets !!!', 'deleteAllSkyPixSheets_')
+    .addItem('Resolve Pasted List…', 'showResolveProgress_')
+    .addItem('Fix Zenith/Landscape layout', 'run_fix_zenith_landscape_')
+    .addItem('Restore Rig color picker', 'rigkit_restoreColorPicker_')
+    .addItem('Restore Location Finders', 'rigkit_restoreAllLocationFinders_');
+  menu.addSubMenu(adminSubMenu);
+
+  menu.addToUi();
+
+  // This part was in your Alpha 54 file
+  try { 
+    if (typeof installOnEditTrigger_ === 'function') {
+      installOnEditTrigger_(); 
+    }
+  }
+  catch (err) {
+    SpreadsheetApp.getActive().toast('Note: onEdit trigger not installed. Use Admin ▸ Enable onEdit Trigger.');
+  }
+}
+
+/**
+ * Orchestrator – calls all kit builders.
+ * *** THIS VERSION IS NOW FIXED ***
+ */
+function SkyPix_BuildAll() {
+  const ss = SpreadsheetApp.getActive();
+  
+  // Helper to log errors without stopping the whole build
+  function runBuild(name, func, passSS) {
+    try {
+      if (typeof func === 'function') {
+        Logger.log('BuildAll: Running ' + name);
+        if (passSS) {
+          func(ss); // Pass 'ss' to older builders
+        } else {
+          func(); // Call new builders directly
+        }
+      } else {
+        Logger.log('BuildAll: Function not found: ' + name);
+      }
+    } catch (e) {
+      Logger.log('BuildAll: ERROR in ' + name + ': ' + e.message);
+    }
+  }
+
+  // We call the functions directly by name.
+  runBuild('_createConfigSheet_', _createConfigSheet_, true);
+  runBuild('buildObjectEntrySheet_', buildObjectEntrySheet_, true);
+  runBuild('buildSetup_', buildSetup_, true);
+  runBuild('buildRigKit_', buildRigKit_, true);
+  
+  // *** This is the corrected line for Build All ***
+  runBuild('SkyPix_BuildCameraKit_Standardized', SkyPix_BuildCameraKit_Standardized, false);
+  
+  runBuild('buildFilterKit_', buildFilterKit_, true);
+  runBuild('buildObjectDatabase_', buildObjectDatabase_, true);
+}
+
+
+// ===== Wrappers for "Build Individual Sheets" Menu =====
+// (These were in your Alpha 54 file, but the Camera Kit one is now fixed)
+
+function SkyPix_BuildObjectEntry() { 
+  buildObjectEntrySheet_(SpreadsheetApp.getActive()); 
+}
+function SkyPix_BuildSetup() { 
+  buildSetup_(SpreadsheetApp.getActive()); 
+}
+function SkyPix_BuildRigKit() { 
+  buildRigKit_(SpreadsheetApp.getActive()); 
+}
+function SkyPix_BuildFilterKit() { 
+  buildFilterKit_(SpreadsheetApp.getActive()); 
+}
+function SkyPix_BuildObjectDatabase() { 
+  buildObjectDatabase_(SpreadsheetApp.getActive()); 
+}
+
+/**
+ * Menu wrapper for "Build Camera Kit"
+ * *** THIS VERSION IS NOW FIXED ***
+ */
+function SkyPix_BuildCameraKit() {
+  // This directly calls the correct function in CameraKit_Standardized.txt
+  SkyPix_BuildCameraKit_Standardized();
+}
+
+/**
+ * Menu wrapper for "Add Camera"
+ */
+function SkyPix_AddCamera(){ 
+  if (typeof SkyPix !== 'undefined' && typeof SkyPix.addDevice === 'function') {
+    SkyPix.addDevice(CK.NAME, 'Camera '); 
+  } else {
+    Logger.log('Error: SkyPix.addDevice is not defined.');
+  }
+}

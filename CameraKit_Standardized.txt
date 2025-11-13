@@ -1,0 +1,488 @@
+// ===== PASTE THIS ENTIRE BLOCK INTO YOUR "CameraKit_Standardized.txt" FILE =====
+
+/**
+ * SkyPix Planner — Camera Kit Module (v10)
+ *
+ * - Corrects Poseidon default specs (Cooling -40, Unity Gain 125, FWC 71.7k, etc.)
+ * - Sets default picker color to HPC (with no text).
+ * - Sets Row 3 camera header to ORANGE and DARK GREY font.
+ * - Restores Row 1 "Camera Kit" title.
+ * - Centers all data cells V&H.
+ * - Row 4 (Camera Model) is set to wrap text.
+ * - Row 11 label is "Unity Gain".
+ * - Builds and calculates Rig Eligibility matrix with 30% rig color.
+ * - Seeds default Sony IMX571 specs and paints ORANGE.
+ * - Includes onEdit logic for ACK checkbox (tints at 30%).
+ * - Registers all bands (1, 2, 15, 16, 22, 23) for dynamic Add/Delete.
+ * - Includes ck_aw_ and ck_pairs_ helpers to prevent crash.
+ */
+
+// Define the correct row structure
+var CK = this.CK || (this.CK = {});
+CK.NAME = 'Camera Kit';
+CK.ROWS = {
+  TITLE: 1,
+  REFRESH: 2,
+  HEADERS: 3,
+  CAMERA_MODEL: 4,
+  SENSOR_MODEL: 5,
+  PIXEL_SIZE: 6,
+  SENSOR_SIZE: 7,     // UNMERGED
+  DARK_CURRENT: 8,
+  FWC: 9,
+  COOL_DELTA: 10,
+  UNITY_GAIN: 11,     // Was Optical Gain
+  READ_NOISE: 12,
+  COLOR: 13,          // Picker ("Camera Highlight Color")
+  ACK: 14,            // Checkbox
+  SPACER_1: 15,       // Blank
+  QE_HDR: 16,         // Subheader
+  QE_START: 17,       // QE Data Start
+  QE_L_INF: 18,
+  QE_PEAK: 19,
+  QE_U_INF: 20,
+  QE_END: 21,         // QE Data End
+  SPACER_2: 22,       // Blank
+  RIG_HDR: 23,        // Subheader
+  RIG_FIRST: 24       // First Rig Triplet starts
+};
+
+// ===== HELPER FUNCTIONS (NOW INCLUDED) =====
+
+/**
+ * Gets the active width of the camera pairs.
+ */
+function ck_aw_(sh){
+  var lastCol = 3;
+  try {
+    var merges = sh.getRange(CK.ROWS.HEADERS, 2, 1, Math.max(2, sh.getMaxColumns()-1)).getMergedRanges();
+    if (merges && merges.length){
+      for (var i=0;i<merges.length;i++){
+        var r = merges[i];
+        if (r.getRow() === CK.ROWS.HEADERS){
+          var right = r.getColumn() + r.getWidth() - 1;
+          if (right > lastCol) lastCol = right;
+        }
+      }
+    }
+  } catch(e) {
+    return 3; // Default to 3 on a fresh sheet
+  }
+  if ((lastCol - 1) % 2 === 1) lastCol++; // make it even
+  return Math.max(3, lastCol);
+}
+
+/**
+ * Returns an array of [left, right] column pairs, e.g., [[2,3], [4,5]]
+ */
+function ck_pairs_(sh){ 
+  var aw = ck_aw_(sh), L=[]; 
+  for (var c=2; c<=aw; c+=2) L.push([c,c+1]);
+  return L; 
+}
+
+/**
+ * Helper to build and style a full-width band
+ */
+function _ck_buildBand(sh, row, text, bg, fg, size, bold, align) {
+  var w = ck_aw_(sh); // Use dynamic width
+  var r = sh.getRange(row, 1, 1, w);
+  try { r.breakApart().merge(); } catch (_) {}
+  r.setBackground(bg)
+   .setFontColor(fg)
+   .setFontWeight(bold ? 'bold' : 'normal')
+   .setFontSize(size)
+   .setHorizontalAlignment(align || 'center')
+   .setVerticalAlignment('middle')
+   .setValue(text);
+}
+
+
+// ===== MAIN BUILD FUNCTION =====
+
+function SkyPix_BuildCameraKit_Standardized() {
+  var ss = SpreadsheetApp.getActive();
+  var sh = ss.getSheetByName(CK.NAME) || ss.insertSheet(CK.NAME, 3);
+  sh.clear();
+  sh.setName(CK.NAME);
+
+  // --- 1. Setup Grid ---
+  var HPC = getHPC_Global_();
+  var w = 3; // Start with A, B, C
+  if (sh.getMaxColumns() < w) sh.insertColumnsAfter(sh.getMaxColumns(), w - sh.getMaxColumns());
+  if (sh.getMaxColumns() > w) sh.deleteColumns(w + 1, sh.getMaxColumns() - w);
+  
+  sh.setColumnWidth(1, 260); // Column A
+  sh.setColumnWidths(2, 2, 45); // Columns B, C
+  sh.setRowHeights(1, sh.getMaxRows(), 36); // All rows 36px
+  sh.setFrozenRows(3);
+
+  // --- 2. Build Full-Width Bands (Title, Refresh, Headers) ---
+  _ck_buildBand(sh, CK.ROWS.TITLE, 'Camera Kit', hpcShade(HPC, 80), '#FFFFFF', 16, true, 'center'); // Title restored
+  
+  // Refresh Bar (Correctly Centered)
+  var refreshRange = sh.getRange(CK.ROWS.REFRESH, 1, 1, w);
+  try { refreshRange.breakApart().merge(); } catch(e) {}
+  refreshRange.setValue('Refresh')
+    .setBackground('#e8e8e8')
+    .setFontColor('#434343')
+    .setFontSize(12)
+    .setFontWeight('bold')
+    .setHorizontalAlignment('center') // Force center
+    .setVerticalAlignment('middle');
+  
+  // QE Header (40% HPC, Left Aligned)
+  _ck_buildBand(sh, CK.ROWS.QE_HDR, 'Quantum Efficiency Curve', hpcShade(HPC, 40), '#434343', 12, true, 'left');
+  
+  // Rig Header (40% HPC, Left Aligned)
+  _ck_buildBand(sh, CK.ROWS.RIG_HDR, 'Rig Eligibility', hpcShade(HPC, 40), '#434343', 12, true, 'left');
+  
+  // Blank Spacers
+  _ck_buildBand(sh, CK.ROWS.SPACER_1, '', null, null, 10, false, 'center'); // Row 15
+  _ck_buildBand(sh, CK.ROWS.SPACER_2, '', null, null, 10, false, 'center'); // Row 22
+
+  // --- 3. Build Header Row (A3, B3:C3) ---
+  var addCell = sh.getRange(CK.ROWS.HEADERS, 1);
+  addCell.setValue('Add Camera...')
+    .setBackground(hpcShade(HPC, 20))
+    .setFontColor('#434343')
+    .setFontWeight('bold')
+    .setFontSize(12)
+    .setHorizontalAlignment('center')
+    .setVerticalAlignment('middle')
+    .setDataValidation(SpreadsheetApp.newDataValidation()
+      .requireValueInList(['Add Camera', 'Cancel'], true)
+      .build()
+    );
+  
+  sh.getRange(CK.ROWS.HEADERS, 2, 1, 2).merge()
+    .setValue('Poseidon') // Default name
+    .setBackground(WARN_ORANGE) // Default to orange
+    .setFontColor('#434343') // Dark grey font
+    .setFontWeight('bold')
+    .setFontSize(12)
+    .setHorizontalAlignment('center')
+    .setVerticalAlignment('middle');
+
+  // --- 4. Build Column A Labels (Rows 4-21) ---
+  var labels = [
+    'Camera Model',           // 4
+    'Sensor Model',           // 5
+    'Pixel Size (µm)',        // 6
+    'Sensor size (pixels)',   // 7
+    'Dark Current (e⁻/s)',    // 8
+    'Full Well Capacity (e⁻)',// 9
+    'Cooling Delta (degC)',   // 10
+    'Unity Gain',             // 11 (Changed)
+    'Read Noise (e⁻)',        // 12
+    'Camera Highlight Color', // 13 (Picker)
+    'Acknowledge Defaults'    // 14 (Checkbox)
+  ];
+  sh.getRange(CK.ROWS.CAMERA_MODEL, 1, labels.length, 1)
+    .setValues(labels.map(function(s){ return [s]; }))
+    .setHorizontalAlignment('left')
+    .setVerticalAlignment('middle');
+
+  var qeLabels = [
+    'Lower Edge (λ/%)',     // 17
+    'Lower Inflection (λ/%)', // 18
+    'Peak (λ/%)',           // 19
+    'Upper Inflection (λ/%)', // 20
+    'Upper Edge (λ/%)'      // 21
+  ];
+  sh.getRange(CK.ROWS.QE_START, 1, qeLabels.length, 1)
+    .setValues(qeLabels.map(function(s){ return [s]; }))
+    .setHorizontalAlignment('left')
+    .setVerticalAlignment('middle');
+
+  // --- 5. Apply Merging, Pickers, and Defaults for Camera 1 ---
+  
+  // Merged Pairs (Rows 4-6, 8-14)
+  var mergedRows = [4, 5, 6, 8, 9, 10, 11, 12, 13, 14];
+  mergedRows.forEach(function(r) {
+    sh.getRange(r, 2, 1, 2).merge()
+      .setHorizontalAlignment('center') // Center H
+      .setVerticalAlignment('middle');  // Center V
+  });
+  
+  // Wrap text on Row 4
+  sh.getRange(CK.ROWS.CAMERA_MODEL, 2, 1, 2).setWrap(true);
+
+  // Unmerged Rows (7, 17-21)
+  var unmergedRows = [7, 17, 18, 19, 20, 21];
+  unmergedRows.forEach(function(r) {
+    sh.getRange(r, 2, 1, 2).breakApart()
+      .setHorizontalAlignment('center') // Center H
+      .setVerticalAlignment('middle');  // Center V
+  });
+  
+  // Add Picker to Row 13
+  var picker = SpreadsheetApp.newDataValidation().requireValueInList(COLOR_PICKER.map(function(r){ return r[0]; }), true).setAllowInvalid(true).build();
+  sh.getRange(CK.ROWS.COLOR, 2, 1, 2).setDataValidation(picker);
+  
+  // Add Checkbox to Row 14
+  sh.getRange(CK.ROWS.ACK, 2, 1, 2).insertCheckboxes();
+
+  // --- 6. Seed IMX571 Defaults ---
+  _ck_seedDefaults_(sh, 2, HPC); // Seed Camera 1 (cols B, C)
+  
+  // --- 7. Build Rig Eligibility ---
+  _ck_buildRigTriplets_(sh, HPC);
+  
+  // --- 8. Final Formatting ---
+  // (Centering is now done in step 5 and 7)
+  
+  // --- 9. Register Kit for "Add Camera" ---
+  // This is the CRITICAL fix for Add/Delete
+  SkyPix.registerKit(CK.NAME, {
+    prefix: 'Camera ', // This tells the AddDevice function how to name new cameras
+    headerRow: CK.ROWS.HEADERS,
+    pickerRow: CK.ROWS.COLOR,
+    // Spec rows (merged)
+    specPairs: { start: 4, end: 14 },
+    // QE rows (unmerged)
+    extraTintRows: [17, 18, 19, 20, 21],
+    // All full-width bands
+    bands: [
+      CK.ROWS.TITLE, 
+      CK.ROWS.REFRESH, 
+      CK.ROWS.QE_HDR, 
+      CK.ROWS.RIG_HDR
+    ],
+    // All blank spacer rows
+    blanks: [
+      CK.ROWS.SPACER_1, 
+      CK.ROWS.SPACER_2
+    ]
+  });
+}
+
+/**
+ * Seeds default data for a new camera (Poseidon OSC) and paints orange.
+ */
+function _ck_seedDefaults_(sh, col, hpc) {
+  // Specs
+  sh.getRange(CK.ROWS.CAMERA_MODEL, col).setValue('Player One Poseidon OSC');
+  sh.getRange(CK.ROWS.SENSOR_MODEL, col).setValue('Sony IMX571');
+  sh.getRange(CK.ROWS.PIXEL_SIZE, col).setValue(3.76);
+  sh.getRange(CK.ROWS.SENSOR_SIZE, col).setValue(6252);     // Width (Updated)
+  sh.getRange(CK.ROWS.SENSOR_SIZE, col + 1).setValue(4176); // Height (Updated)
+  sh.getRange(CK.ROWS.DARK_CURRENT, col).setValue(0.001);
+  sh.getRange(CK.ROWS.FWC, col).setValue(71700);        // Updated
+  sh.getRange(CK.ROWS.COOL_DELTA, col).setValue(-40);     // Updated
+  sh.getRange(CK.ROWS.UNITY_GAIN, col).setValue(125);     // Updated
+  sh.getRange(CK.ROWS.READ_NOISE, col).setValue(1.5);
+  
+  // Default color to HPC, but with NO text
+  sh.getRange(CK.ROWS.COLOR, col).setValue(''); // No "HPC" text
+  paintColorCell_(sh.getRange(CK.ROWS.COLOR, col), hpc); // Paint the cell
+
+  // QE Curve Data (OSC - Green, Red, Blue)
+  sh.getRange(CK.ROWS.QE_START, col).setValue(420); sh.getRange(CK.ROWS.QE_START, col + 1).setValue(70);
+  sh.getRange(CK.ROWS.QE_L_INF, col).setValue(480); sh.getRange(CK.ROWS.QE_L_INF, col + 1).setValue(90);
+  sh.getRange(CK.ROWS.QE_PEAK, col).setValue(530); sh.getRange(CK.ROWS.QE_PEAK, col + 1).setValue(81); // Updated to 81%
+  sh.getRange(CK.ROWS.QE_U_INF, col).setValue(580); sh.getRange(CK.ROWS.QE_U_INF, col + 1).setValue(80);
+  sh.getRange(CK.ROWS.QE_END, col).setValue(620); sh.getRange(CK.ROWS.QE_END, col + 1).setValue(70);
+  
+  // Paint all spec and QE rows ORANGE
+  var rowsToPaint = [4,5,6,7,8,9,10,11,12,14,17,18,19,20,21]; // All data + ACK, skip color picker
+  rowsToPaint.forEach(function(r) {
+    sh.getRange(r, col, 1, 2).setBackground(WARN_ORANGE);
+  });
+}
+
+/**
+ * Helper to build the Rig Eligibility triplets
+ */
+function _ck_buildRigTriplets_(sh, hpc) {
+  var rigSheet = SpreadsheetApp.getActive().getSheetByName('Rig kit');
+  if (!rigSheet) {
+    sh.getRange(CK.ROWS.RIG_FIRST, 1).setValue('Run "Build Rig Kit" first.');
+    return;
+  }
+  
+  // Get rig specs [name, color, focalLengthMM] from Code.gs helper
+  var rigs = _rigkit_getRigSpecs_(rigSheet); 
+  if (!rigs || !rigs.length) {
+     sh.getRange(CK.ROWS.RIG_FIRST, 1).setValue('No rigs found in "Rig kit".');
+     return;
+  }
+  
+  var aw = ck_aw_(sh); // Active width of Camera Kit
+  var cameraPairs = ck_pairs_(sh); // Get camera columns [[2,3], [4,5], ...]
+  
+  rigs.forEach(function(rig, i) {
+    var rowA = CK.ROWS.RIG_FIRST + (i * 3);
+    var rowB = rowA + 1;
+    var rowC = rowA + 2;
+    
+    // Get rig color and shade it
+    var rigColor = rig.color || hpc;
+    var shadedColor = hpcShade(rigColor, 30); // 30% shade as requested
+    
+    // Apply shading to all 3 rows across all active columns
+    sh.getRange(rowA, 1, 3, aw).setBackground(shadedColor);
+    
+    // --- Row A: Rig Name & Checkbox ---
+    sh.getRange(rowA, 1)
+      .setValue(rig.name)
+      .setHorizontalAlignment('left')
+      .setVerticalAlignment('middle');
+      
+    // --- Row B: Field of View (Unmerged) ---
+    sh.getRange(rowB, 1)
+      .setValue('FOV') // Changed label
+      .setHorizontalAlignment('right')
+      .setVerticalAlignment('middle');
+    
+    // --- Row C: Image Scale (Merged) ---
+    sh.getRange(rowC, 1)
+      .setValue('Image Scale')
+      .setHorizontalAlignment('right')
+      .setVerticalAlignment('middle');
+      
+    // --- Loop through each CAMERA to set checkboxes and calcs ---
+    cameraPairs.forEach(function(pair) {
+      var camCol = pair[0]; // e.g., 2
+      
+      // Row A: Checkbox
+      sh.getRange(rowA, camCol, 1, 2).merge()
+        .insertCheckboxes()
+        .setFontColor('#434343') // Set font color
+        .setHorizontalAlignment('center')
+        .setVerticalAlignment('middle');
+      
+      // Row B: FOV (unmerged)
+      sh.getRange(rowB, camCol, 1, 2).breakApart()
+        .setHorizontalAlignment('center') // Center H
+        .setVerticalAlignment('middle');  // Center V
+      
+      // Row C: Image Scale (merged)
+      sh.getRange(rowC, camCol, 1, 2).merge()
+        .setHorizontalAlignment('center') // Center H
+        .setVerticalAlignment('middle');  // Center V
+      
+      // --- Calculations ---
+      try {
+        var focalLength = rig.focalLengthMM;
+        var pixelSize = sh.getRange(CK.ROWS.PIXEL_SIZE, camCol).getValue();
+        var sensorW = sh.getRange(CK.ROWS.SENSOR_SIZE, camCol).getValue();
+        var sensorH = sh.getRange(CK.ROWS.SENSOR_SIZE, camCol + 1).getValue();
+
+        if (focalLength && pixelSize && sensorW && sensorH) {
+          var scale = (206.265 * pixelSize) / focalLength;
+          var fovW = (scale * sensorW) / 60.0; // arcmin
+          var fovH = (scale * sensorH) / 60.0; // arcmin
+          
+          sh.getRange(rowB, camCol).setValue(fovW.toFixed(2));
+          sh.getRange(rowB, camCol + 1).setValue(fovH.toFixed(2));
+          sh.getRange(rowC, camCol).setValue(scale.toFixed(2));
+        }
+      } catch (e) {
+        Logger.log('Error in FOV/Scale calc: ' + e.message);
+      }
+    });
+  });
+}
+
+
+/**
+ * New onEdit handler for the Camera Kit sheet.
+ * This is called by the main onEditTrigger in Code.gs
+ */
+function CameraKit_onEdit(e) {
+  var sh = e.range.getSheet();
+  if (sh.getName() !== CK.NAME) return;
+  
+  var row = e.range.getRow();
+  var col = e.range.getColumn();
+  var val = e.value;
+
+  // 1. Handle Color Picker (Row 13)
+  if (row === CK.ROWS.COLOR && col > 1) {
+    paintColorCell_(e.range, val); // Core helper from Code.gs
+    // Now, check if ACK is true, and if so, repaint
+    var ackCell = sh.getRange(CK.ROWS.ACK, e.range.getColumn());
+    if (ackCell.isChecked()) {
+      _ck_applyTint(sh, e.range.getColumn(), e.range.getBackground());
+    }
+    return;
+  }
+  
+  // 2. Handle Acknowledge Defaults (Row 14)
+  if (row === CK.ROWS.ACK && col > 1) {
+    var colorCell = sh.getRange(CK.ROWS.COLOR, col);
+    var baseColor = colorCell.getBackground();
+    if (e.range.isChecked()) {
+      // Checkbox was checked
+      _ck_applyTint(sh, col, baseColor);
+    } else {
+      // Checkbox was UN-checked, restore orange
+      _ck_applyTint(sh, col, WARN_ORANGE, true);
+    }
+    return;
+  }
+}
+
+/**
+ * Helper to apply tint to a camera column pair.
+ * @param {boolean} forceOrange - If true, ignores baseColor and uses WARN_ORANGE.
+ */
+function _ck_applyTint(sh, col, baseColor, forceOrange) {
+  // Find the start of the 2-column pair
+  var startCol = (col % 2 == 0) ? col : col - 1;
+  var tint;
+  
+  if (forceOrange) {
+    tint = WARN_ORANGE;
+  } else {
+    tint = hpcShade(baseColor, 30); // 30% tint
+  }
+  
+  // Rows 4-12 (Specs)
+  for (var r = CK.ROWS.CAMERA_MODEL; r <= CK.ROWS.READ_NOISE; r++) {
+    sh.getRange(r, startCol, 1, 2).setBackground(tint);
+  }
+  
+  // Row 13 (Color Picker) - set to 100% of base color (unless forcing orange)
+  sh.getRange(CK.ROWS.COLOR, startCol, 1, 2).setBackground(forceOrange ? WARN_ORANGE : baseColor);
+  
+  // Row 14 (ACK)
+  sh.getRange(CK.ROWS.ACK, startCol, 1, 2).setBackground(tint);
+  
+  // Rows 17-21 (QE Curve)
+  for (var r = CK.ROWS.QE_START; r <= CK.ROWS.QE_END; r++) {
+    sh.getRange(r, startCol, 1, 2).setBackground(tint);
+  }
+  
+  // Repaint header with 30% tint (or orange) and DARK GREY font
+  sh.getRange(CK.ROWS.HEADERS, startCol, 1, 2)
+    .setBackground(tint)
+    .setFontColor('#434343') // Dark Grey
+    .setFontWeight('bold');
+}
+
+/**
+ * Debug wrapper for the build function
+ */
+(function(){
+  if (typeof SkyPix_BuildCameraKit_Standardized !== 'function') return;
+  try { console.log('CK BUILD: module loaded'); } catch(_){}
+  
+  try {
+    var __orig = SkyPix_BuildCameraKit_Standardized;
+    SkyPix_BuildCameraKit_Standardized = function(){
+      try {
+        console.log('CK BUILD: start');
+        var r = __orig.apply(this, arguments);
+        console.log('CK BUILD: done');
+        return r;
+      } catch (err) {
+        var msg = (err && err.stack) ? err.stack : String(err);
+        console.error('SKYPIX ERROR in SkyPix_BuildCameraKit_Standardized:\n' + msg);
+        try { SpreadsheetApp.getActive().toast('Error in Camera Kit — see Executions'); } catch(_){}
+        throw err;
+      }
+    };
+  } catch (_){}
+})();

@@ -1,0 +1,70 @@
+/** ===== SkyPix Color Core (robust, overwrite-safe) ===== */
+var SkyPix = this.SkyPix || (this.SkyPix = {});
+SkyPix._pickerRegistry = SkyPix._pickerRegistry || {};
+
+// HPC provider with safe fallback
+SkyPix.getHPC = function(){
+  try { if (typeof getHPC_Global_ === 'function') return getHPC_Global_(); } catch(_) {}
+  return '#6aa5d9';
+};
+
+// Seed a default palette exactly once
+(function seedPaletteIfNeeded(){
+  if (SkyPix.palette && SkyPix.palette.names && SkyPix.palette.map) return;
+  var hpc = SkyPix.getHPC();
+  var defaults = [
+    ['HPC',hpc], ['Purple','#8e44ad'], ['Blue','#2980b9'], ['Cyan','#16a085'],
+    ['Teal','#1abc9c'], ['Green','#27ae60'], ['Lime','#9acd32'], ['Yellow','#f1c40f'],
+    ['Orange','#e67e22'], ['Red','#e74c3c'], ['Magenta','#d81b60'], ['Pink','#e91e63'],
+    ['Brown','#8d6e63'], ['Gray','#9e9e9e'], ['Black','#000000'], ['White','#ffffff']
+  ];
+  var names = [], map = {};
+  defaults.forEach(function(p){ names.push(p[0]); map[p[0]] = p[1]; });
+  SkyPix.palette = { names:names, map:map };
+})();
+
+// Always return a valid palette (overwrites any older getPalette)
+SkyPix.getPalette = function(){ return SkyPix.palette; };
+
+// Utils
+SkyPix.colorHex = function(name){
+  var pal = SkyPix.getPalette();
+  return pal.map[String(name||'').trim()] || SkyPix.getHPC();
+};
+SkyPix.shade = SkyPix.shade || function(hex, pct){
+  hex = String(hex||'#6aa5d9').replace('#','');
+  var r=parseInt(hex.slice(0,2),16), g=parseInt(hex.slice(2,4),16), b=parseInt(hex.slice(4,6),16);
+  var toHex = n => ('0'+Math.max(0,Math.min(255,n|0)).toString(16)).slice(-2);
+  var nr=Math.round(r*pct+255*(1-pct)), ng=Math.round(g*pct+255*(1-pct)), nb=Math.round(b*pct+255*(1-pct));
+  return '#'+toHex(nr)+toHex(ng)+toHex(nb);
+};
+SkyPix.paintPair = SkyPix.paintPair || function(sh, leftCol, rows, hex){
+  (rows||[]).forEach(r => sh.getRange(r, leftCol, 1, 2).setBackground(hex));
+};
+
+// Picker attach (uses getPalette; never touches SkyPix.palette directly)
+SkyPix.attachPickerAndTint = function(sh, pickerRow, tintRows, opts){
+  var pal = SkyPix.getPalette();
+  var names = pal.names, map = pal.map;
+  var w = Math.max(2, sh.getLastColumn());
+  var dv = SpreadsheetApp.newDataValidation()
+              .requireValueInList(names, true)
+              .setAllowInvalid(true).build();
+  var defaultName = (opts && opts.defaultName) || names[0];
+  var defaultHex  = map[defaultName] || SkyPix.getHPC();
+  var tintPct     = (opts && opts.tintPct) || 0.10;
+
+  for (var c=2; c<=w; c+=2){
+    sh.getRange(pickerRow, c)
+      .setDataValidation(dv)
+      .setValue('')
+      .setBackground(defaultHex);
+    SkyPix.paintPair(sh, c, (tintRows||[]), SkyPix.shade(defaultHex, tintPct));
+  }
+};
+
+// Registry helper for onEdit routers
+SkyPix.registerColorPicker = SkyPix.registerColorPicker || function(sheetName, row, tintRows){
+  SkyPix._pickerRegistry[sheetName] = { row: row, tintRows: tintRows || [] };
+};
+/** ===== end color core ===== */
