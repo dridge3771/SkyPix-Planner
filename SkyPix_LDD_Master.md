@@ -3,7 +3,7 @@ SKYPIX LIVING DESIGN DOCUMENT
 PROJECT BOOT & CONTINUITY PROTOCOL
 ============================================================
 
-LDD VERSION: 2026-03-01-B  |  PARTS: XL–XLIII  |  LINES: 5399  |  VERIFY: TWO-TONE-LOCKED  |  INTEGRITY: wc -l this file → must equal LINES value
+LDD VERSION: 2026-03-01-D  |  PARTS: XL–XLIII  |  LINES: 5512  |  VERIFY: PLANISPHERE-LOCKED  |  INTEGRITY: wc -l this file → must equal LINES value
 
 ROLE OF THIS DOCUMENT
 This LDD is executable project context. It replaces prior conversations.
@@ -1343,10 +1343,73 @@ Replaces GAS onEdit propagation with centralized Color Matrix:
 
 The Rig Planner is: a geometric visibility engine, a time-budget optimization engine, a spectral signal optimization engine, a lunar proximity warning system, and a project allocation tool.
 
+---
+
+### 38.13 Rig Planner Planisphere (LOCKED — 2026-03-01)
+
+Each rig planner has an associated **Planisphere** — an all-sky projection tied specifically to that rig planner's object list and rig geometry.
+
+**Projection:**
+- All-sky view, center = zenith
+- Outer ring = the rig's actual horizon polygon
+- Zenith obstruction projected onto the sky surface
+
+**Overlays:**
+- Declination circles every 5° or 10° (user preference)
+- Hour angle hash marks on each declination circle — at a glance the user reads remaining arc time
+- Each object from the rig planner plotted at its sky position for the selected time
+- Objects labeled with object ID
+
+**Time control:**
+- Time slider or time input field
+- Display updates as slider moves — objects migrate along their arcs in real time
+- Shows any rig planner's objects at any time the user selects
+
+**Interaction model:** Not yet designed — deferred to UI design phase.
+
+**Performance (preliminary estimate):** With ~20 objects in a rig planner, planisphere recomputation on time slider move is computationally trivial. No performance concern at typical planner sizes.
+
+**Relationship to rig planner:**
+- One planisphere per rig planner — not per rig
+- Planisphere and object list displayed side by side
+- Planisphere is the spatial companion to the rig planner's tabular data
 
 ---
 
-# PART XVI — DATABASE SCHEMA (LOCKED)
+### 38.14 App Home Screen Canon (LOCKED — 2026-03-01)
+
+**What the user sees when they open SkyPix:**
+
+The last open rig planner — with its planisphere and object list — displayed immediately. No splash screen, no navigation required. The user lands in their work.
+
+**Persistent layout:**
+```
+┌─────────────────────────────────────────────────────┐
+│  [Rig Planner 1] [Rig Planner 2] [Rig Planner N]   │  ← Rig planner tabs across top
+├──────────────────────────┬──────────────────────────┤
+│                          │                          │
+│      PLANISPHERE         │     OBJECT LIST          │
+│   (all-sky projection)   │   (rig planner table)    │
+│                          │                          │
+│                          │                          │
+│                          │                          │
+├──────────────────────────┴──────────────────────────┤
+│ [Station 1] [Station 2] [Station N]                 │  ← Stations across bottom
+│ ☁ Cloud  👁 Seeing  🌡 Weather  💨 Wind             │  ← Persistent in corners
+└─────────────────────────────────────────────────────┘
+```
+
+**Layout rules:**
+- Rig planners tabbed across the top — switch between rigs without losing context
+- Stations tabbed across the bottom
+- Weather, cloud cover, and seeing data persistent in the station bar corners — always visible, never hidden
+- Planisphere and object list are co-equal panels — neither subordinate to the other
+
+**Design rationale:**
+The Rig Planner is the central focus of SkyPix. The home screen reflects that. The user opens the app and is immediately oriented — sky on the left, plan on the right, conditions always present at the bottom.
+
+---
+
 
 ## 39. Homogeneous Objects Table (LOCKED — 2026-02-19)
 **Decision:** Single `objects` table. Replaces four-table proposal. Unanimous — Gemmi + Chatty concur.
@@ -4984,23 +5047,71 @@ Dec > +15° null tile   → WHAM + WISE synthesis (L0)
 Remaining null         → Finkbeiner fallback
 ```
 
-**Finkbeiner anchoring (Zero-Point calibration):**
-The entire SHFM is normalized against the Finkbeiner 2003 composite backbone. Without this anchor, hemispheric zero-point drift accumulates between SHASSA and VTSS seams. Finkbeiner ensures 1 Rayleigh is physically consistent across the entire sky.
+**Finkbeiner anchor lock (LOCKED — 2026-03-01):**
 
-**Unit provenance (Prime Directive 13 compliant):**
-FITS headers for SHASSA and VTSS HiPS distributions do not carry BUNIT. This is a property of CDS HiPS publication, not a defect. Units verified via survey calibration authority:
-
-- SHASSA: Gaustad et al. 2001, PASP 113, 1326
-- VTSS: Dennison et al. 1998, ApJ 500, 280
-- Finkbeiner: Finkbeiner 2003, ApJS 146, 407
-
-Witness type: `literature`. PD13 satisfied.
-
-**BUNIT handling canon:**
+```json
+{
+  "filename": "fg_halpha_map_r512.fits",
+  "bytes": 12594240,
+  "bunit": "R",
+  "sha256": "0768cb79f20adb0080004e10a8b3671f53a79a8f1d1cf0a2f0faec654c742099",
+  "md5": "ec1ad2691ac2ff027f5bbc60fafa35d9",
+  "source": "NASA LAMBDA",
+  "resolution": "HEALPix Nside=512 (~6.9 arcmin)",
+  "reference": "Finkbeiner2003_ApJS_146_407",
+  "locked": "2026-03-01",
+  "status": "IMMUTABLE RADIOMETRIC REFERENCE — SHFM v1"
+}
 ```
-BUNIT absent → expected for SHASSA/VTSS HiPS — literature witness applies → continue
-BUNIT present but NOT Rayleighs → HALT — unexpected unit found
+
+If NASA LAMBDA ever modifies this file, the SHA-256 checksum will catch it. This checksum is the provenance anchor for the entire SHFM. Any SHFM rebuild must verify against this checksum before proceeding.
+
+---
+
+## 150.1 Hybrid Grid Doctrine (LOCKED — 2026-03-01)
+
+**Validated by:** Claude (Architecture) + Gemmi (Scientific Validation)
+**Authority:** David (Architect) approved
+
+**The grain size decision:**
+Too coarse (Nside 512 delivery) → radiometric safety but loss of sky texture for UI zoom and precise object sampling. Too fine (Nside 1024 delivery without doctrine) → morphology hallucination risk — math invents filaments that don't exist.
+
+**Resolution: Hybrid Resolution Shield**
+
+| Grid | HEALPix | Pixel scale | Purpose |
+|---|---|---|---|
+| Truth Grid | Nside 512 | ~6.9 arcmin | All physics — radiometric anchoring, normalization, Two-Tone morphology, WHAM synthesis |
+| Delivery Grid | Nside 1024 | ~3.4 arcmin | SCD/SUD sampling, UI display, object coordinate lookup |
+
+**The Decoupling Rule (INVIOLATE):**
+All Two-Tone morphology decisions (jewel vs. room) and all structural drizzle (WHAM + WISE) must be finalized on the Truth Grid. The Delivery Grid receives only the calibrated result.
+
+**The Upsampling Rule:**
+Moving from 512 to 1024 is simple bilinear or bicubic interpolation of the calibrated answer — not the equation. We upsample the result, never the physics.
+
+**Normalization Stability Rule (Gemmi):**
+Compute normalization field `(finkbeiner_smooth / sv_smooth)` at 6.9' scale (Nside 512). Upsample that smooth field to 1024. This eliminates gradient ringing near survey seams — the field becomes a gentle correction layer, not a sharp-edged mask.
+
+**Flux Conservation Rule (Gemmi):**
+Every photon from the WHAM anchor is accounted for in a 6.9' bucket at the truth grid. Upsampling to 1024 divides each bucket into four sub-pixels. Total flux must be conserved across those four pixels. The SNR engine remains physically grounded because radiometric certainty is capped at the 6.9' scale.
+
+**Confidence flag inheritance:**
+L0 (synthesized) and L2 (measured) confidence flags are assigned at the 512 truth scale. Every 1024 delivery pixel inherits its confidence flag from its 512 parent. A 1024 pixel cannot claim higher confidence than its parent.
+
+**Epistemic honesty statement:**
+The underlying radiometric certainty of any SHFM value is capped at 6.9' (Nside 512) regardless of the delivery grid pixel scale. The SNR engine must treat all flux values as having 6.9' spatial resolution.
+
+**Cygnus Rift validation (PENDING — 2026-03-01):**
+Before full acquisition, Chatty runs a 5°×5° test centered on RA 307°, Dec +41°. Pass criteria:
 ```
+No new filaments at 1024 not present at 512   → PASS
+ha_room_flux delta between grids < 5%          → PASS
+ha_local_excess delta between grids < 10%      → PASS
+All three pass → proceed to full acquisition
+Any fail → report to Claude before proceeding
+```
+
+---
 
 ---
 
@@ -5396,4 +5507,6 @@ Background Hα accounts for a substantial fraction of raw signal at compact PN c
 | Beta Era | PENDING |
 
 
-LDD END: 2026-03-01-B  |  FINAL SECTION: ERA TRANSITION LOG  |  VERIFY: COMPLETE  |  INTEGRITY: wc -l this file → must equal 5399
+LDD END: 2026-03-01-D  |  FINAL SECTION: ERA TRANSITION LOG  |  VERIFY: COMPLETE  |  INTEGRITY: wc -l this file → must equal 5512
+
+
