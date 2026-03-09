@@ -3,7 +3,7 @@ SKYPIX LIVING DESIGN DOCUMENT
 PROJECT BOOT & CONTINUITY PROTOCOL
 ============================================================
 
-LDD VERSION: 2026-03-08-A  |  PARTS: XL–XLIX  |  VERIFY: BROADBAND-PATH-LOCKED
+LDD VERSION: 2026-03-08-B  |  PARTS: XL–L  |  VERIFY: BROADBAND-PATH-LOCKED
 
 ROLE OF THIS DOCUMENT
 This LDD is executable project context. It replaces prior conversations.
@@ -6484,6 +6484,199 @@ SkyVu visualization requirements:
 ---
 <!-- END PART XLIX -->
 
+## LDD PATCH — Part L: Terrain Build Phase — Canonical Hα Terrain Architecture
+## Apply after Part XLIX (Terrain Finalization, Section 208)
+## Patch date: 2026-03-08
+## Calibration work: Cathy (Gemini)
+
+---
+
+## PART L — CANONICAL Hα TERRAIN ARCHITECTURE (LOCKED 2026-03-08)
+
+### Section 209 — Terrain Scope
+
+The canonical SkyPix Hα terrain layer supports two simultaneous purposes:
+- SkyVu discovery interface visualization
+- Rig Planner Hα exposure calculations
+
+Object ingestion and database architecture are unchanged. Terrain stores sky emission fields only — objects are never stored inside terrain.
+
+**Terrain pixels contain:**
+- Hα flux
+- Trust / weight metadata
+- Structural morphology guidance (W3)
+- Optional additional bands (future)
+
+---
+
+### Section 210 — Dual-Resolution Terrain Structure (LOCKED)
+
+Two lattices operate simultaneously at different resolutions.
+
+**Structural Lattice — WISE W3**
+
+```
+Map:     WISE W3 dust map
+NSIDE:   4096
+Pixel:   ≈ 0.86′
+Purpose: morphological guide, WHAM redistribution,
+         Milky Way visual structure, object mist modulation
+```
+
+**Hα Terrain Lattice — SkyPix Canonical**
+
+```
+Map:     skypix_ha_terrain_n2048.fits
+NSIDE:   2048
+Pixel:   ≈ 1.7′
+```
+
+NSIDE 2048 selection rationale:
+- Aligns with VTSS native resolution (~1.6′)
+- Supports SkyVu zoom (~11.7×) without visible pixelation
+- Computationally efficient
+- Avoids over-sampling relative to survey input resolution
+
+---
+
+### Section 211 — Hα Survey Inputs and Hierarchy (LOCKED)
+
+Three surveys contribute to the terrain in strict priority order.
+
+**SHASSA — Global Reference Scale**
+```
+Resolution: ≈ 48″
+Coverage:   ≈ 65% of sky
+Role:       Photometric authority — global brightness reference
+```
+SHASSA is the scale anchor for the entire terrain. All other surveys are calibrated to SHASSA.
+
+**VTSS — Northern Refinement**
+```
+Resolution: ≈ 96″
+Coverage:   Northern sky
+Role:       Higher-resolution northern terrain
+```
+VTSS must be calibrated to SHASSA before use.
+
+**Calibration method:** Milky Way transition band Dec +10° → +20°
+
+**VTSS calibration result (LOCKED — Cathy, 2026-03-08):**
+```
+VTSS_calibrated = 57.75761812 × VTSS + 70.70270610
+```
+Validation confirms brightness continuity across the survey seam. This coefficient is a measured statistical result from the MW transition band — not an estimate.
+
+**WHAM / Finkbeiner Composite — Gap Fill**
+```
+Resolution: Coarse all-sky
+Role:       Fill regions not covered by SHASSA or VTSS
+            Provide large-scale emission envelope
+```
+WHAM is NOT used as photometric authority. It fills coverage gaps only, redistributed via W3 morphology.
+
+---
+
+### Section 212 — Terrain Merge Rules (LOCKED)
+
+For each NSIDE-2048 pixel:
+
+```
+if VTSS_calibrated exists:
+    use VTSS_calibrated
+
+elif SHASSA exists:
+    use arithmetic mean of contributing SHASSA pixels
+
+else:
+    use WHAM redistributed via W3 morphology
+```
+
+---
+
+### Section 213 — W3 Morphology Role (LOCKED)
+
+W3 controls spatial structure, not brightness scale.
+
+**Four uses:**
+1. Redistribute WHAM emission into physically realistic spatial structure
+2. Guide SkyVu Milky Way morphology visualization
+3. Modulate object mist layers (prevent artificial blobs)
+4. Maintain visual terrain realism at all zoom levels
+
+W3 never overrides photometric values from SHASSA or VTSS_calibrated.
+
+---
+
+### Section 214 — Object Influence Layer (SkyVu)
+
+Separate optional overlay — not part of the canonical terrain file.
+
+Objects create Gaussian influence fields modulated by W3 morphology:
+
+```
+Emission objects (HII, PN, SNR) → red mist    (attraction)
+Dark nebulae (Dobashi DN)        → blue mist   (repulsion)
+Overlap zones (DN/HII paired)    → gold seams  (contrast boundary)
+```
+
+W3 modulation prevents artificial circular blobs — influence fields follow terrain morphology.
+
+---
+
+### Section 215 — SkyVu Layer Stack (LOCKED)
+
+Planned rendering layers in display order:
+
+```
+1. Hα terrain heat map          (canonical terrain — skypix_ha_terrain_n2048.fits)
+2. Object mist layer            (Gaussian influence fields from SCD objects)
+3. Rig horizon / zenith         (obstruction overlay from Rig Kit)
+4. Milky Way dust layer         (W3 structural visualization)
+5. Lunar path / avoidance cone  (time-dependent — Rig Planner input)
+```
+
+---
+
+### Section 216 — Canonical Terrain Pipeline (LOCKED)
+
+**Output file:** `skypix_ha_terrain_n2048.fits`
+
+**Pipeline steps:**
+```
+1. Apply VTSS calibration: VTSS_calibrated = 57.75761812 × VTSS + 70.70270610
+2. Merge surveys per Section 212 merge rules
+3. Expand / resample to NSIDE 2048
+4. Redistribute WHAM using W3 structural morphology
+5. Produce canonical terrain map
+```
+
+**Feeds:**
+- SkyVu discovery visualization
+- Rig Planner Hα exposure modeling
+
+These two consumers receive identical terrain data — discovery and exposure prediction remain permanently consistent.
+
+---
+
+### Section 217 — Construction State (2026-03-08)
+
+| Component | Status |
+|---|---|
+| VTSS calibration coefficient | ✅ Locked — 57.75761812 × VTSS + 70.70270610 |
+| SHASSA as photometric reference | ✅ Locked |
+| WHAM as gap fill only | ✅ Locked |
+| Dual-resolution architecture (W3 @ 4096, Hα @ 2048) | ✅ Locked |
+| Terrain merge rules | ✅ Locked |
+| W3 morphology role | ✅ Locked |
+| SkyVu layer stack | ✅ Locked |
+| skypix_ha_terrain_n2048.fits construction | 🔄 In progress |
+| Object mist layer | ⏳ Pending canonical terrain |
+| SkyVu UI build | ⏳ Pending canonical terrain |
+
+---
+<!-- END PART L -->
+LDD VERSION: 2026-03-08-B  |  PARTS: XL–L  |  VERIFY: BROADBAND-PATH-LOCKED
 
 LDD END: 2026-03-08 (Parts XLIV–XLIX — Trust System, SkyVu, SHFM Normalization, WISE Terrain, SEA Strategy, Terrain Finalization)
 
