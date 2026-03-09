@@ -3,7 +3,7 @@ SKYPIX LIVING DESIGN DOCUMENT
 PROJECT BOOT & CONTINUITY PROTOCOL
 ============================================================
 
-LDD VERSION: 2026-03-01-F  |  PARTS: XL–XLIII  |  LINES: 5550  |  VERIFY: BROADBAND-PATH-LOCKED  |  INTEGRITY: wc -l this file → must equal LINES value
+LDD VERSION: 2026-03-08-A  |  PARTS: XL–XLIX  |  VERIFY: BROADBAND-PATH-LOCKED
 
 ROLE OF THIS DOCUMENT
 This LDD is executable project context. It replaces prior conversations.
@@ -5544,7 +5544,947 @@ Background Hα accounts for a substantial fraction of raw signal at compact PN c
 | App Build Era | PENDING |
 | Beta Era | PENDING |
 
+# PART XLIV — SHFM TRUST SYSTEM (LOCKED — 2026-03-01)
 
-LDD END: 2026-03-01-F  |  FINAL SECTION: ERA TRANSITION LOG  |  VERIFY: COMPLETE  |  INTEGRITY: wc -l this file → must equal 5550
+## 166. Trust System Purpose
+
+The SHFM provides calibrated Hα flux. The Trust System answers a separate question:
+
+> "Can SkyPix trust this pixel?"
+
+Users never see the Trust System. It operates invisibly beneath every SNR calculation. Its output — the **Trusted Planning Flux (TPF)** — is what the SNR engine actually consumes, not raw SHFM flux.
+
+TPF replaces "CRF" (Calibrated Reliable Flux). Reason: CRF implied photometric calibration. TPF correctly implies trust-weighted planning value.
+
+---
+
+## 167. Trust Map Layer Architecture (LOCKED — 2026-03-01)
+
+| Layer | Name | Status | Purpose |
+|---|---|---|---|
+| A | Provenance mask | ✅ Implicit in SHFM | SHASSA / VTSS / synthesis origin per pixel |
+| B | Coverage confidence | Next execution | Survey edges, interpolation zones, low-support pixels |
+| C | Stellar contamination | Pending Type A/B ruling | PSF blooming, saturation halos, continuum leakage |
+| D | Morphology stability | After C complete | Radial spikes, PSF wings, scan residuals |
+| E | Composite trust field | After A–D complete | Final SHFM_TRUST(x,y) → TPF |
+
+Layers B, C, D are independent. Layer E combines all. SkyPix knows *why* a pixel is distrusted, not just *that* it is.
+
+---
+
+## 168. Stellar Contamination Strategy (LOCKED — 2026-03-01)
+
+Canonical contamination authority: Gaia DR3 bright subset, G < 12.
+
+Two mask layers — separate, not merged:
+- BSC5 mask (V < 5.0) — catastrophic saturation — already built
+- Gaia subset (G 5–12) — moderate contamination — Step C
+
+**Type A / Type B OB star classification (MANDATORY before masking):**
+
+Type A — Isolated bright star, no associated nebulosity
+  → Artifact only → RCP mask applies → flux suppressed
+
+Type B — OB star with associated HII / known ionization source
+  → Star IS the jewel engine → mask does NOT apply → flux preserved
+  → Flag as "stellar ionization source present"
+
+Classification method: cross-match Gaia G < 12 against SCD object classes.
+Star within angular extent of HII, EN, or PN → Type B. Otherwise → Type A.
+
+Chatty gate: report Type A vs Type B counts before writing any mask pixels.
+
+Gemmi canon: "The Trust Map must distinguish between Light from a Star (Artifact) and Light created BY a Star (Real Nebula)."
+
+---
+
+## 169. Composite Trust Field (LOCKED — 2026-03-01)
+
+Output: SHFM_TRUST(x,y)
+  1.0       → full confidence
+  0.1–0.9   → partial trust — flagged in planner
+  0.0       → L- SAWAG
+
+TPF = SHFM_flux × SHFM_TRUST
+
+SNR engine consumes TPF. All band scaling and exposure recommendations derive from TPF.
+
+Rig Planner: RCP < 0.5 → double cross-hatch or explicit warning with reason code.
+
+---
+
+## 170. SHFM Construction State (2026-03-01)
+
+| Phase | Status |
+|---|---|
+| SHASSA + VTSS acquisition and NII correction | ✅ COMPLETE |
+| Survey union sv_union_truth_n512.fits | ✅ COMPLETE |
+| Finkbeiner anchor smoothing | ✅ COMPLETE |
+| Global normalization shfm_truth_n512.fits | ✅ COMPLETE |
+| Cygnus Rift validation | ✅ PASSED |
+| BSC5 bright star mask | ✅ COMPLETE |
+| Gaia bright star integration | 🔄 IN PROGRESS |
+| Trust System Layer B coverage confidence | 🔄 IN PROGRESS |
+| Trust System Layer C stellar contamination | ⏳ Pending B |
+| Trust System Layer D morphology stability | ⏳ Pending C |
+| Trust System Layer E composite trust field | ⏳ Pending D |
+| Upload to Supabase Storage | ⏳ Pending trust system |
+| Two-Tone extraction 257,978 objects | ⏳ Pending upload |
+
+## LDD PATCH — Part XLV: SkyVu Discovery Interface
+## Apply after Section 170 (SHFM Construction State)
+## Patch date: 2026-03-06
+
+---
+
+### ERA TRANSITION LOG — UPDATE
+
+Replace existing Trust System Era row and add SkyVu row:
+
+| Era | Status |
+|---|---|
+| SHFM Pipeline Era | REBUILDING — north/south normalization in progress |
+| Trust System Era | PAUSED — pending SHFM rebuild completion |
+| SkyVu Era | ARCHITECTURE DEFINED — pending SHFM mist layer |
+
+---
+
+## PART XLV — SkyVu Discovery Interface (ARCHITECTURE LOCKED 2026-03-06)
+
+### Section 171 — SkyVu Role and Purpose
+
+SkyVu is the visual discovery interface for the SkyPix ecosystem. It converts the SHFM from a static emission map into an interactive discovery surface connecting the visual sky directly to the SkyPix Curated Database (SCD).
+
+SkyVu allows users to:
+- Explore the SHFM emission field
+- Identify emission structures
+- Select regions of sky
+- Query the SCD for objects within those regions
+
+**Discovery chain:**
+```
+SHFM visualization
+    ↓
+region selection
+    ↓
+SCD scrape
+```
+
+**Critical architectural distinction:**
+
+```
+SkyVu ≠ observing planner
+SkyVu = discovery map
+```
+
+SkyVu operates in RA-fixed celestial coordinates. The SHFM is rendered in a static sky frame, not tied to observing time. Observability calculations are handled elsewhere in SkyPix (Planner, Rig Kit, Site Horizon, time-based visibility engine).
+
+SkyVu does **not** evaluate: altitude, airmass, rise/set, meridian crossing.
+
+---
+
+### Section 172 — Sky Selection Geometry
+
+SkyVu uses radial sky segments, not rectangles.
+
+**User interaction:** click → drag → release
+
+This defines a spherical sky wedge bounded by:
+```
+RA_min, RA_max, Dec_min, Dec_max
+```
+
+At small angular scales the selection appears rectangular. At large scales it becomes a donut segment, correctly reflecting spherical sky geometry. This is the geometrically honest representation of a sky region — rectangular RA/Dec boxes are approximations that degrade at wide fields and near the poles.
+
+---
+
+### Section 173 — SCD Scrape Parameters
+
+The region selection drives the primary search. Four parameter classes refine the scrape:
+
+**1. Sky Region** — derived directly from SkyVu selection:
+```
+RA_min, RA_max, Dec_min, Dec_max
+```
+
+**2. Object Size Filter** — angular size bounds:
+```
+size_min_arcmin, size_max_arcmin
+```
+Enables discovery of small compact nebulae through large diffuse structures.
+
+**3. Spectral Band Filter** — emission profile thresholds:
+```
+WHERE ha_strength > threshold
+WHERE oiii_strength > threshold
+WHERE sii_strength > threshold
+```
+Supported bands: Hα, Hβ, OIII, SII, NII, HeII, IR
+
+Enables targeted searches: Hα-dominant emission nebulae, OIII planetaries, SII shock regions.
+
+**4. Object Class Filter** — optional class restriction:
+```
+object_class IN (EN, PN, SNR, DN, OC, GC, GX, ...)
+```
+
+All four parameters are independent. Any combination is valid.
+
+---
+
+### Section 174 — Discovery Workflow (Canonical)
+
+```
+User observes emission structure in SHFM mist
+        ↓
+User zooms into region of interest
+        ↓
+User defines radial sky segment (click-drag-release)
+        ↓
+SkyVu converts selection → RA/Dec bounds
+        ↓
+SCD scrape executed with optional spectral/class/size filters
+        ↓
+Objects returned and rendered as overlay on SHFM
+        ↓
+User selects object → transitions to:
+    SkyPix Planner  |  Object deep dive  |  Exposure calculations
+```
+
+---
+
+### Section 175 — Result Presentation
+
+Returned objects populate the SkyVu discovery panel. Each entry displays:
+- Object name and catalogue designation
+- Object class
+- Coordinates (RA/Dec J2000)
+- Angular size (arcmin)
+- Spectral strengths (per-band, 0–100 relative scale)
+
+Objects are rendered as overlays on the SHFM mist layer. Selection and transition to Planner is single-click.
+
+---
+
+### Section 176 — SkyVu Construction State (2026-03-06)
+
+| Component | Status |
+|---|---|
+| SHFM survey ingestion | ✅ Complete |
+| North/south response normalization | 🔄 Rebuilding — equalize_north_response_n512_v3.py |
+| SHFM mist layer (renderer) | 🔄 Geometry solved — pending normalized input |
+| SkyVu discovery architecture | ✅ Locked (Part XLV) |
+| SCD scrape integration | ✅ Defined — pending UI build |
+| SkyVu UI build | ⏳ Pending SHFM mist layer |
+
+**Active rebuild task:**
+```
+equalize_north_response_n512_v3.py
+input: shassa_truth_n512_smooth6arcmin.fits
+goal:  calibrate north response against SHASSA using Milky Way continuity
+```
+
+---
+<!-- END PART XLV -->
+## LDD PATCH — Part XLVI: SHFM North–South Response Investigation
+## Apply after Part XLV (SkyVu, Section 176)
+## Patch date: 2026-03-06
+
+---
+
+## PART XLVI — SHFM North–South Response Investigation and Normalization (LOCKED 2026-03-06)
+
+### Section 177 — Initial Observation and First Diagnosis
+
+During SkyVu dome renderer testing, a strong declination arc appeared near Dec ≈ +13° — sharp color discontinuity, initially interpreted as a rendering artifact. Declination markers on the dome projection traced it to the survey join boundary.
+
+The seam corresponded to the transition between:
+
+| Region | Survey |
+|---|---|
+| South | SHASSA |
+| North | VTSS + Finkbeiner fallback |
+
+Investigation revealed **two independent causes:**
+
+1. A data hole between Dec +13° and +15°
+2. Rayleigh dilution due to resolution mismatch
+
+---
+
+### Section 178 — Data Hole Discovery and Repair
+
+The original SHFM mosaic logic used:
+- SHASSA truncated at +13°
+- VTSS assumed to extend to −15°
+
+The ingested VTSS dataset did not actually cover that region, leaving a 2° null band — producing the sharp arc.
+
+**Correction:** SHASSA extended to +15°. Data hole eliminated.
+
+---
+
+### Section 179 — Rayleigh Dilution (ARCHITECTURAL FINDING)
+
+After repairing the data hole, a large north–south brightness difference remained. Root cause: resolution mismatch between surveys.
+
+| Survey | Native Resolution | Linear Scale | Area Scale |
+|---|---|---|---|
+| SHASSA | 0.8′ | 1× | 1× |
+| VTSS | 1.6′ | 2× | 4× |
+| Finkbeiner WHAM synthesis | ~6′ | 7.5× | ~56× |
+
+The north composite used VTSS where available, Finkbeiner elsewhere. The Finkbeiner map had already been smoothed to ~6′. This distributes the same emission over ~56× more area than SHASSA, producing apparent brightness reduction.
+
+**This is the Rayleigh dilution effect.**
+
+**Critical architectural conclusion:** The seam was not a rendering problem. It was a survey response mismatch. This affects:
+- SHFM visualization
+- SNR engine
+- Exposure calculations
+- Background modeling
+
+**Therefore the fix must be numerical normalization, not visual blending.**
+
+---
+
+### Section 180 — Normalization Architecture (LOCKED)
+
+Four-step calibration procedure:
+
+**Step 1 — Match response resolution**
+
+Create a temporary SHASSA map smoothed to 6′ to match the north composite resolution.
+
+```
+Script:  shassa_smooth_to_6arcmin_n512.py
+Output:  shassa_truth_n512_smooth6arcmin.fits
+```
+
+This file is used **only for calibration** — never as a science product.
+
+**Step 2 — Milky Way calibration reference**
+
+The Milky Way crosses the SHASSA/VTSS boundary, providing identical physical structure with strong signal on both sides. This makes it the ideal cross-survey calibration reference.
+
+```
+Compare MW signal near the seam:
+    SHASSA(6′) vs NORTH(6′)
+    → compute normalization coefficient (gain)
+```
+
+**Step 3 — Equalize north response**
+
+```
+north_equalized = north_raw × calibration_gain
+Output: north_equalized_truth_n512.fits
+```
+
+**Step 4 — Final SHFM union**
+
+```
+SHASSA native resolution   → Dec ≤ +15°
+NORTH_EQUALIZED            → Dec > +15°
+Optional ramp              → visual smoothing only, outside MW
+```
+
+---
+
+### Section 181 — Architectural Significance
+
+**The Milky Way seam becomes a survey calibration tool.**
+
+Instead of hiding the seam, SkyPix uses it to normalize the entire sky. This ensures:
+- Consistent Rayleigh scale across all surveys
+- Accurate SNR predictions
+- Correct exposure calculations
+- Seamless sky visualization
+
+**The SHFM is not a stitched survey map. It is a calibrated sky emission model maintaining a consistent Rayleigh scale across multiple surveys with fundamentally different resolutions.**
+
+This requirement now informs both the SkyPix SNR engine and the SkyVu discovery interface.
+
+---
+
+### Section 182 — SHFM Rebuild State (2026-03-06)
+
+| Component | Status |
+|---|---|
+| Survey ingestion | ✅ Complete |
+| North composite construction | ✅ Complete |
+| Data hole repair (SHASSA → +15°) | ✅ Complete |
+| SHASSA smoothed calibration map | ✅ Complete — shassa_truth_n512_smooth6arcmin.fits |
+| North response equalization | 🔄 In progress — equalize_north_response_n512_v3.py |
+| Final SHFM union | ⏳ Pending equalization |
+| Trust System Layer B–E | ⏳ Pending final SHFM union |
+| SHFM mist layer (renderer) | 🔄 Geometry solved — pending normalized input |
+| SkyVu UI build | ⏳ Pending mist layer |
+
+**Immediate next script:**
+```
+equalize_north_response_n512_v3.py
+input: shassa_truth_n512_smooth6arcmin.fits
+goal:  compute calibration gain from MW continuity across survey boundary
+```
+
+---
+<!-- END PART XLVI -->
+## LDD PATCH — Part XLVII REVISION: WISE-Anchored Radiometric Terrain Model
+## Supersedes initial Part XLVII draft
+## Apply after Part XLVI (SHFM Normalization Investigation, Section 182)
+## Patch date: 2026-03-07
+
+---
+
+## PART XLVII — WISE-Anchored Radiometric Terrain Model (ARCHITECTURE LOCKED 2026-03-07)
+
+### Section 183 — Executive Summary
+
+#### Background
+
+Initial SHFM development constructed a unified radiometric field by directly stitching the major Hα surveys: SHASSA, VTSS, WHAM, and Finkbeiner fallback. While technically functional, testing revealed structural limitations inherent to this approach:
+
+- Survey seam artifacts
+- Resolution mismatches between surveys
+- Incomplete survey coverage holes
+- Difficulty distributing coarse WHAM flux realistically
+- Instability in background modeling for SNR calculations
+
+These limitations arise because surveys represent radiometric measurements without a spatial morphological model governing how emission distributes across the sky.
+
+#### Architectural Transition
+
+SkyPix transitions from a survey-stitched radiometric map to a **terrain-driven radiometric allocation model**.
+
+The new architecture separates four previously conflated concerns:
+
+```
+Spatial morphology       ← WISE W3 + W4 terrain layers
+Radiometric measurements ← WHAM / VTSS / SHASSA
+Allocation logic         ← Attractor basin engine
+Allocation modulation    ← Influencers + coefficients
+```
+
+**Core doctrine:**
+```
+Terrain ≠ Signal
+Signal ≠ Allocation
+Allocation ≠ UI
+```
+
+---
+
+### Section 184 — Spatial Authority: WISE W3 Terrain
+
+The WISE / WSSA W3 (12μm) diffuse infrared map is adopted as the permanent SkyVu spatial substrate.
+
+**Properties:**
+```
+Format:    HEALPix
+NSIDE:     4096
+Ordering:  RING
+Coords:    Galactic
+Band:      W3 (12μm) — PAH emission, photodissociation region boundaries, warm dust
+```
+
+W3 traces the walls and boundaries of emission structures — the morphological skeleton of the Galactic emission environment. It defines ridges, valleys, and cavities that guide flux settlement.
+
+**W4 status:** W4 (22μm) is not available in a ready-to-use artifact-free state and is excluded from V1. W3 serves as sole terrain authority. W4 integration may be revisited in a future release if a clean dataset becomes available.
+
+**Critical constraint:** W3 is the spatial authority only — not a radiometric authority. It guides flux distribution; it does not supply flux values.
+
+---
+
+### Section 185 — Radiometric Signal Sources
+
+Hα signal measurements remain separate, independent, and authoritative. Integration follows progressive refinement doctrine:
+
+```
+WHAM    → global baseline reservoir (~1° resolution)
+VTSS    → northern refinement (higher resolution)
+SHASSA  → southern refinement (higher resolution)
+```
+
+Surveys are not permanently merged. They are allocated onto terrain.
+
+---
+
+### Section 186 — Allocation Model: Attractor Basin (LOCKED)
+
+Flux allocation uses an **attractor basin model** with two influence classes in strict priority order:
+
+**Primary: Environmental Influences** ← higher weight
+
+Continuous, diffuse, topology-defining. These shape the large-scale basin landscape.
+
+- **HII region attractors** — broad angular-size-scaled flux attraction; define the ambient emission terrain
+- **Dark nebula / molecular cloud repellers** (Dobashi DN) — local flux suppression and boundary shaping
+
+Environmental influences modulate basin shape continuously across the sky. HII regions carry greater spatial influence than any other class — they are the background emission environment.
+
+**Secondary: Catastrophic Influences** ← lower weight, localized
+
+Discrete, high-energy events superimposed on the environmental terrain. Strong locally but subordinate to HII in overall weight.
+
+- **PN attractors** — compact, high-intensity narrow basin injection
+- **SNR attractors** — shell-like high-intensity basin injection
+- **BSC5 bright star saturation zones** (V < 5.0) — complete flux suppression
+- **Confirmed survey artifacts** — flagged suppression with reason code
+- **Trust System Type A stellar contamination masks** (Part XLIV)
+
+Catastrophic emission attractors (PN/SNR) punch deep narrow basins into existing HII terrain. Catastrophic suppression masks are applied as hard overrides after basin settlement.
+
+**Dark nebula boundary treatment (LOCKED):**
+
+DN repulsion uses Gaussian falloff, σ scaled to angular size (value TBD — calibration phase):
+
+```
+paired DN/HII:
+    DN Gaussian repulsion falling off toward HII
+    HII Gaussian attraction rising toward DN
+    → natural saddle point between them
+    → saddle point = high-value discovery target
+
+isolated DN:
+    Gaussian falloff only
+    no adjacent attraction field
+    low cost of over-suppression in low-flux regions
+```
+
+Gaussian falloff is physically honest — DN catalogue boundaries are approximations, not walls. The model does not treat catalogue boundaries as ground truth. The paired saddle point geometry emerges naturally from the two overlapping Gaussian fields without special-case logic.
+
+Dark nebulae in close angular proximity to HII regions are not purely repulsive — they are **high-value paired targets**. The contrast between suppression and adjacent emission defines some of the most scientifically and visually compelling imaging regions in the sky (e.g. Barnard 33 / IC 434).
+
+Pairing behavior — "less is more" separation rule:
+
+```
+if angular_separation(DN, HII) < pairing_threshold:
+    DN repulsion active                          (as normal)
+    adjacent HII basin deepened by pairing bonus (attraction amplified)
+    paired target flagged as high-value discovery candidate in SkyVu
+
+if angular_separation(DN, HII) > pairing_threshold:
+    DN repulsion active only
+    no pairing bonus
+    emission cavity treatment
+```
+
+The pairing threshold and bonus magnitude are LFU-tunable coefficients. Users who image DN/HII pairs and report successful outcomes tighten the threshold over time.
+
+---
+
+### Section 187 — Coefficient Model
+
+Influence strength is controlled through coefficient fields. These are the primary tuning surface for initial calibration and LFU adaptation — the most dynamic layer in the entire model.
+
+| Coefficient | Class | Controls |
+|---|---|---|
+| W3 Terrain Response | Terrain | How strongly W3 basin topology shapes flux settlement |
+| HII Attraction | Environmental | Broad angular-size-scaled flux attraction — ambient emission landscape |
+| Dark Boundary Suppression | Environmental | Repulsion strength around dark nebulae / molecular clouds |
+| PN/SNR Attraction | Catastrophic | Compact high-intensity basin injection strength |
+| DN Gaussian σ | Environmental | Falloff width scaling factor — σ = f(angular size), value TBD calibration phase |
+| DN/HII Pairing Bonus | Environmental | Basin deepening magnitude applied to HII adjacent to paired DN |
+| VTSS Trust | Signal | Survey weight for VTSS northern signal |
+| SHASSA Trust | Signal | Survey weight for SHASSA southern signal |
+
+**Coefficient layer stability:**
+
+| Coefficient family | Expected stability |
+|---|---|
+| Terrain (W3, W4) | High — physical constants, rarely tuned |
+| Signal trust (WHAM, VTSS, SHASSA) | Medium — tuned during normalization, stable post-calibration |
+| Environmental (HII, DN, DN/HII pairing) | Low — primary LFU feedback target |
+| Catastrophic (PN/SNR) | Low — secondary LFU feedback target |
+
+The coefficient layer is the most dynamic component in the model. It is the primary surface for beta testing feedback and LFU adaptation. Terrain and signal sources remain fixed; the coefficient layer absorbs all learning.
+
+---
+
+### Section 188 — Full Stack Architecture
+
+```
+WISE W3 (12μm)  +  WISE W4 (22μm)
+         ↓
+    Terrain surface
+    (basin topology + depth)
+         ↓
+Environmental influencers
+    Emission attractors (SCD: HII / PN / SNR)
+    Dark boundary repellers (Dobashi DN)
+         ↓
+Coefficient fields
+    (terrain response, emitter attraction, dark boundary, survey trust)
+         ↓
+Signal layers
+    WHAM → VTSS → SHASSA
+    (progressive refinement doctrine)
+         ↓
+Attractor basin flux allocation engine
+         ↓
+Working radiometric terrain layer
+         ↓
+SkyVu discovery visualization  +  SkyPix SNR engine
+```
+
+**The working radiometric terrain layer serves both purposes simultaneously.** Discovery visualization and exposure prediction are driven by the same field and are permanently consistent.
+
+**Catastrophic overrides applied post-allocation:**
+```
+BSC5 mask + Trust System Type A masks + artifact flags
+         ↓
+Final working layer
+```
+
+---
+
+### Section 189 — Learning From Use (LFU) Integration
+
+LFU modifies coefficient fields only. Terrain layers and signal sources are never modified by user feedback.
+
+User imaging outcomes tune:
+- W3 terrain response coefficient
+- W4 depth modulation coefficient
+- Emitter attraction coefficients
+- Dark boundary coefficients
+- Per-survey trust weightings
+
+This allows SkyPix to improve predictions without restructuring the underlying model.
+
+---
+
+### Section 190 — Allocation Engine: Basin Depth Function (LOCKED)
+
+**Terrain basin depth function:**
+
+```
+terrain(x) = W3(x)
+```
+
+W3 PAH emission defines basin topology directly. Basin depth at any sky position is proportional to W3 flux — where W3 is bright, the attractor basin is deep; where W3 is faint, the basin is shallow.
+
+W4 dual-terrain model was designed and locked but W4 is not available in a ready-to-use artifact-free state for V1. The hybrid function `W3 × (1 + γ·W4)` remains documented as the target architecture for a future release when a clean W4 dataset becomes available.
+
+**Remaining design questions for allocation engine:**
+- Influence radius for HII environmental attractors: angular-size-scaled (preferred) vs. fixed arcmin — approach locked, value TBD calibration phase
+
+---
+
+### Section 191 — Construction State (2026-03-07)
+
+| Component | Status |
+|---|---|
+| SHFM stitching experiments | ✅ Complete — superseded by terrain model |
+| WISE W3 terrain layer (NSIDE=4096) | ⏳ Pending acquisition |
+| WISE W4 terrain layer | ❌ Excluded — not available artifact-free for V1 |
+| WHAM baseline reservoir | ✅ Available |
+| VTSS northern signal | ✅ Available |
+| SHASSA southern signal | ✅ Available |
+| SCD emission object influencer layer | ⏳ Pending terrain |
+| Dobashi DN influencer layer | ⏳ Pending terrain |
+| Coefficient field design | ⏳ Pending allocation model |
+| Attractor basin allocation engine | ⏳ Pending — design questions Section 190 |
+| Working radiometric terrain layer | ⏳ Pending engine |
+| Catastrophic override masks | ✅ BSC5 complete / Trust System A pending |
+| SkyVu visualization | ⏳ Pending working layer |
+| SNR engine integration | ⏳ Pending working layer |
+| LFU coefficient adaptation | ⏳ Pending beta |
+
+---
+<!-- END PART XLVII REVISION -->
+## LDD PATCH — Part XLVIII: SEA Community & Marketing Strategy
+## Apply after Part XLVII (WISE Terrain Model, Section 191)
+## Authored by: Jim (ChatGPT) — SkyPix Development Team
+## Patch date: 2026-03-07
+
+---
+
+## PART XLVIII — SEA Community & Marketing Strategy (LOCKED 2026-03-07)
+
+### Section 192 — Core Philosophy: The Scientific Legacy
+
+SkyPix marketing shifts the value proposition from a static utility (a planning tool) to a dynamic participation model (a global scientific mission).
+
+**The Hook:**
+> "Don't just take a picture. Validate the Universe."
+
+**The Mechanism:** Automated telemetry from imaging and processing scripts ensures that every "Committed" project contributes to the Sunday Bake.
+
+Every Ambassador is not a consumer — they are a data contributor to the world's most accurate radiometric terrain model.
+
+---
+
+### Section 193 — The SEA Identity (SkyPix Emission Ambassador)
+
+The user is branded as an Ambassador, not a "user." This elevated status is reinforced through:
+
+**The Impact Report**
+A shareable post-session summary showing the specific "nudge" the Ambassador's data provided to the global coefficients. Primary social vector for organic SkyPix recruitment.
+
+**The FITS Header Credit**
+Permanent attribution in the metadata of the Working Terrain Map for Ambassadors who provide the first L3 (LFU Validated) data for a sector. Scientific legacy embedded in the dataset itself.
+
+---
+
+### Section 194 — The L3 Frontier Mission Strategy
+
+To resolve survey holes and inconsistent baselines, SkyPix utilizes the L3 Confidence layer to gamify data acquisition.
+
+**Priority Missions**
+The SkyPix server identifies L3-voids — regions with high predicted flux but zero LFU validation.
+
+**The Visualization**
+SkyVu renders these voids as "Uncharted Territory," prompting SEAs to "Claim the L3" for that coordinate.
+
+**Strategic Outcome**
+This directs the global fleet of smart telescopes toward the most scientifically valuable targets, rather than redundant popular objects. The community collectively fills the radiometric map rather than over-imaging Orion for the ten-thousandth time.
+
+---
+
+### Section 195 — Community Partnership: The Goofi Challenge Integration
+
+SkyPix actively recruits established community challenges (e.g., Goofi's Imaging Challenge) into the L3 Validation strategy.
+
+**The Alignment**
+SkyPix proposes targets for community challenges that correspond with major L3-voids.
+
+**The Consensus**
+Hundreds of Ambassadors targeting the same object in a single month produces a "Super-Consensus" of radiometric truth in the Sunday Bake — the highest-confidence LFU validation achievable.
+
+**The Viral Loop**
+Challenge participants share their "L3 Authority" status on forums (CloudyNights, Astrobin, etc.), positioning SkyPix as the app for serious community contributors.
+
+---
+
+### Section 196 — The Sunday Bake: Weekly Marketing Event
+
+The weekly update to the Working Terrain Map is treated as a community-wide event, not a silent background sync.
+
+**The Monday Morning Sync**
+Every Rig Planner globally prompts the user to download the latest Sunday Master.
+
+**The Informant UI**
+The update does not merely download a file. It briefs the community on collective progress:
+
+> *"This week, 1,400 SEAs closed the L3-gap in the Cygnus region by 15%."*
+
+The Sunday Bake is simultaneously:
+- A scientific event (coefficient update)
+- A marketing event (community engagement)
+- A retention mechanism (weekly touchpoint with every active user)
+
+---
+
+### Section 197 — Lexicon & Brand Authority (ENFORCED)
+
+The following lexicon is strictly enforced across the website, documentation, social media, and all team communications:
+
+| Term | Category | Definition |
+|---|---|---|
+| SkyPix | The Ecosystem | The parent brand |
+| SkyVu | The Feature | The immersive radiometric discovery window |
+| SEA | The Participant | SkyPix Emission Ambassador — the human |
+| L3 | The Data Standard | LFU Validated — the proof |
+| Sunday Bake | The Synthesis | The weekly global coefficient update |
+
+---
+
+### Section 198 — Immediate Next Task: Ambassador Impact Report
+
+The Ambassador Impact Report is the primary social vector for SEA recruitment. Design of the report UI and copy is the next strategic task.
+
+Report must convey:
+- Which sector the Ambassador's data contributed to
+- Magnitude of the coefficient nudge their data produced
+- L3 status achieved (first-claimant credit if applicable)
+- Shareable format optimized for CloudyNights, Astrobin, social media
+
+---
+
+### Section 199 — SEA Strategy Construction State (2026-03-07)
+
+| Component | Status |
+|---|---|
+| SEA identity and branding | ✅ Locked |
+| L3 Frontier mission strategy | ✅ Locked |
+| Sunday Bake event architecture | ✅ Locked |
+| Goofi Challenge integration model | ✅ Locked |
+| Brand lexicon | ✅ Enforced |
+| Ambassador Impact Report UI | ⏳ Next task |
+| L3-void visualization in SkyVu | ⏳ Pending SkyVu build |
+| Telemetry pipeline (imaging → Sunday Bake) | ⏳ Pending App Build Era |
+| FITS header attribution system | ⏳ Pending App Build Era |
+
+---
+<!-- END PART XLVIII -->
+## LDD PATCH — Part XLIX: Terrain Architecture Finalization & Transition to SkyVu
+## Apply after Part XLVIII (SEA Strategy, Section 199)
+## Patch date: 2026-03-07
+
+---
+
+## PART XLIX — Terrain Architecture Finalization (LOCKED 2026-03-07)
+
+### Section 200 — Three-Authority Separation (LOCKED)
+
+SkyPix operates on a clean separation between three independent authorities:
+
+```
+Terrain  → sky emission physics       (pixelized sky field)
+SCD      → object physics             (object-centric database)
+SUD      → user working dataset       (planner-local copy)
+```
+
+These three authorities do not overlap. No authority performs the role of another.
+
+---
+
+### Section 201 — Terrain Role: Sky Physics
+
+Terrain is a pixelized sky field representing measured emission and environmental structure. Terrain pixels represent geographic sky locations — not objects.
+
+**Terrain contains:**
+- Hα signal field (WHAM / VTSS / SHASSA integration)
+- WISE W3 terrain structure
+- Data weight / trust layers
+- W4 modifier layer (future — pending artifact-free dataset)
+
+**Terrain does not contain object records.**
+
+Terrain is the stable physical foundation of the entire SkyPix model. It is not modified by LFU.
+
+---
+
+### Section 202 — SCD Role: Object Physics
+
+The SkyPix Curated Database stores object-centric information.
+
+**Each SCD object contains:**
+- Coordinates
+- Angular size
+- Relative band strengths (Hα, OIII, SII, NII, Hβ, HeII, IR)
+- Confidence level (L0–L3)
+- Terrain-derived canonical baseline flux values (written during Sunday Bake)
+
+**Sunday Bake sampling:**
+
+```
+terrain sampled at object coordinate
+    ↓
+resulting flux values written into SCD
+    ↓
+object canonical baseline flux established
+```
+
+LFU evidence adjusts object band behavior stored in the SCD. Objects evolve statistically through accumulated LFU evidence. Terrain remains unchanged.
+
+---
+
+### Section 203 — SUD Role: User Working Dataset
+
+When an object is added to a Rig Planner:
+
+```
+SUD ← copy from SCD
+```
+
+**SUD contains:**
+- Coordinates
+- Relative band strengths
+- Terrain-derived flux values
+
+**The Rig Planner operates entirely from the SUD. No planner operations query the SCD or terrain directly.**
+
+This isolation ensures planner performance is independent of database or terrain query load, and that user working data is never contaminated by in-progress SCD or terrain updates.
+
+---
+
+### Section 204 — LFU Data Flow (LOCKED)
+
+```
+User imaging result (telemetry)
+    ↓
+LFU evidence accumulated
+    ↓
+SCD object band behavior adjusted
+    ↓
+Sunday Bake: terrain re-sampled at object coordinates
+    ↓
+SCD canonical flux values updated
+    ↓
+Monday Morning Sync: SUD updated from SCD on next planner open
+```
+
+LFU never touches terrain. Terrain never touches SUD directly.
+
+---
+
+### Section 205 — Storage Estimates
+
+| Component | Estimated Size |
+|---|---|
+| SCD | ~508 MB |
+| Terrain layers | ~1–2 GB |
+| Total | < 3 GB |
+
+Fits comfortably within Supabase Pro tier.
+
+---
+
+### Section 206 — Full Layered Architecture (LOCKED)
+
+```
+Terrain       → sky emission physics (stable, LFU-immune)
+    ↓ Sunday Bake sampling
+SCD           → object properties + canonical flux (LFU-adaptive)
+    ↓ copy on add-to-planner
+SUD           → user working data (planner-local, isolated)
+    ↓
+Planner       → SNR / exposure engine (SUD-only queries)
+```
+
+---
+
+### Section 207 — Next Focus: SkyVu Terrain Visualization
+
+SkyVu must present emission structure, discovery cues, user navigation, and object overlays without exposing survey artifacts.
+
+**SkyVu visualization derives from:**
+
+```
+WISE W3 terrain
++
+Hα signal overlay
+```
+
+SkyVu visualization requirements:
+- Emission structure rendered from working radiometric terrain layer
+- Discovery cues: L3-void "Uncharted Territory" regions flagged
+- DN/HII saddle points surfaced as high-value target indicators
+- Object overlays: SCD objects at sky positions, toggled by class/band filter
+- User navigation: Dec bands, labeled tick marks, zoom/pan
+- No survey boundary artifacts visible to the user
+
+---
+
+### Section 208 — Construction State (2026-03-07)
+
+| Component | Status |
+|---|---|
+| Three-authority separation | ✅ Locked |
+| Terrain layer architecture | ✅ Locked |
+| SCD canonical flux via Sunday Bake | ✅ Locked |
+| SUD isolation from terrain/SCD | ✅ Locked |
+| LFU data flow | ✅ Locked |
+| Storage architecture (Supabase Pro) | ✅ Confirmed |
+| WISE W3 acquisition | ⏳ Pending |
+| Hα signal integration (WHAM/VTSS/SHASSA) | 🔄 Normalization in progress |
+| SkyVu terrain visualization | ⏳ Next focus |
+
+---
+<!-- END PART XLIX -->
+
+
+LDD END: 2026-03-08 (Parts XLIV–XLIX — Trust System, SkyVu, SHFM Normalization, WISE Terrain, SEA Strategy, Terrain Finalization)
 
 
