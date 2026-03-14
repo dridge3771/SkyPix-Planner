@@ -3,7 +3,7 @@ SKYPIX LIVING DESIGN DOCUMENT
 PROJECT BOOT & CONTINUITY PROTOCOL
 ============================================================
 
-LDD VERSION: 2026-03-08-B  |  PARTS: XL–L  |  VERIFY: BROADBAND-PATH-LOCKED
+LDD VERSION: 2026-03-09-D  |  PARTS: XL–LIV  |  VERIFY: BROADBAND-PATH-LOCKED
 
 ROLE OF THIS DOCUMENT
 This LDD is executable project context. It replaces prior conversations.
@@ -6676,8 +6676,523 @@ These two consumers receive identical terrain data — discovery and exposure pr
 
 ---
 <!-- END PART L -->
-LDD VERSION: 2026-03-08-B  |  PARTS: XL–L  |  VERIFY: BROADBAND-PATH-LOCKED
 
-LDD END: 2026-03-08 (Parts XLIV–XLIX — Trust System, SkyVu, SHFM Normalization, WISE Terrain, SEA Strategy, Terrain Finalization)
+## LDD PATCH — Part LI: SkyVu Architecture & Terrain Pipeline Status
+## Apply after Part L (Canonical Hα Terrain Architecture, Section 217)
+## Date: 2026-03-09
+## Prepared by: David & Cathy
+
+---
+
+## PART LI — SkyVu Architecture Finalization (LOCKED 2026-03-09)
+
+### Section 218 — Terrain Pipeline Status (2026-03-09)
+
+SHASSA native HiPS tile acquisition is in progress (~470/960 frames observed during session).
+
+**Survey pixel integration — solved cases:**
+```
+VTSS (1.6′)   → NSIDE-2048 (1.7′): 1:1 slide-in, ~7% expansion — trivial
+SHASSA (0.8′) → NSIDE-2048 (1.7′): 2×2 subpixel average into each 1.7′ pixel — trivial
+```
+
+**WHAM redistribution — W3-guided (algorithm defined, implementation in progress):**
+
+Each WHAM pixel (60′) contains approximately (60/1.7)² ≈ 1,245 NSIDE-2048 pixels.
+W3 dust density is used as a physically motivated redistribution proxy — dust correlates with star-forming regions, HII environments, and ISM density structure that produces Hα emission.
+
+```
+ha_pixel[i] = WHAM_pixel × (W3[i] / Σ W3[contained])
+```
+
+**Edge case — W3 uniformly near-zero within a WHAM pixel:**
+```
+if Σ W3[contained] ≈ 0:
+    ha_pixel[i] = WHAM_pixel / N_contained   (equal share fallback)
+```
+
+Equal-share fallback is physically honest — flux exists per WHAM measurement but spatial structure within the cell is unknown. W3 is a proxy, not a measurement, but is the best physically grounded steering available in survey-gap regions.
+```
+1.  SHASSA native tile acquisition
+2.  Pedestal removal
+3.  NII ×0.75 correction (SHASSA only)
+4.  VTSS native tile acquisition
+5.  VTSS → SHASSA cross-calibration
+5.5 Integrate WHAM large-scale Hα map
+6.  Merge calibrated survey data
+6.5 Distribute Hα flux using W3 morphology into 1.7′ pixels
+7.  Construct canonical terrain map
+```
+
+**Final output:** `skypix_ha_terrain_n2048.fits`
+
+| Layer | NSIDE | Pixel size | Purpose |
+|---|---|---|---|
+| Hα terrain | 2048 | ≈ 1.7′ | Canonical emission terrain |
+| W3 structural | 4096 | ≈ 0.86′ | Morphology guide, WHAM redistribution, visual continuity |
+
+---
+
+### Section 219 — SkyVu Dual Operating Modes (LOCKED)
+
+SkyVu operates in two modes determined by zoom level.
+
+**Session Planning Mode**
+
+Active when zoom ≤ ~1.41 — entire sky dome visible.
+
+Displayed elements:
+- Horizon ring
+- Zenith obstruction
+- Declination circles
+- RA/Dec geometry
+- Visibility arcs
+- Planner objects
+- Time slider
+
+Purpose: Determine when objects are observable during the session. SkyVu behaves as a rig-aware planisphere.
+
+**Discovery Mode**
+
+Triggered when zoom exceeds the geometric threshold where the horizon circle leaves the viewport.
+
+```
+Threshold: zoom ≈ 1.414
+Condition: sky circle radius = half the viewport diagonal
+```
+
+Elements that fade out at threshold:
+- Horizon ring
+- Zenith obstruction
+- Visibility arcs
+
+Terrain layers that appear:
+- Hα terrain
+- Dust terrain (W3)
+- Object influence layer
+- Stellar illumination layers
+
+Purpose: Explore astrophysical terrain to locate interesting imaging opportunities.
+
+---
+
+### Section 220 — SkyVu Viewport Geometry (LOCKED)
+
+```
+Viewport dimensions: 1080 × 1080 pixels
+```
+
+**Zoom behavior:** The viewport moves into the sky dome — the sky circle expands beyond viewport edges at zoom > 1. The sky circle does not shrink; the viewport crops into it.
+
+**Navigation controls:**
+```
+Mouse wheel        → zoom
+Right scrollbar    → north/south motion
+Bottom scrollbar   → east/west motion
+```
+
+Scrollbar behavior mirrors navigation found in imaging software viewports — familiar to the target user.
+
+---
+
+### Section 221 — SkyVu Layer Control System (LOCKED)
+
+Layers controlled via right-edge binder tabs. Each tab includes a gamma bead.
+
+**Interaction model:**
+```
+Tap tab    → layer on/off
+Slide bead → gamma adjustment (vertical slide = abacus behavior)
+```
+
+**Layer stack — fixed order (top → bottom):**
+```
+A stars               ← operational discovery overlays
+B stars
+O stars
+Objects
+Hα terrain            ← structural foundations
+Dust terrain (W3)
+```
+
+Upper layers = operational discovery overlays.
+Lower layers = structural terrain foundations.
+Layer stack order is not user-configurable.
+
+---
+
+### Section 222 — Center Workspace Modes (LOCKED)
+
+Three modes accessible via tab selector at top left above object list.
+
+**Default mode on application open:** SkyVu
+
+| Mode | Tab Label | Content |
+|---|---|---|
+| SkyVu | SkyVu | Sky viewport, terrain layers, discovery overlays, visibility arcs when zoomed out |
+| Exposure Planning | Exposure Planning | Rig Planner matrix — filters, cameras, SNR, exposure strategy, band strengths, band confidence, limitations, total exposure, subframe duration, commit column |
+| Seasonal Observability | Seasonal Observability | Seasonal windows, east/west visibility segments, annual accessibility ranges, declination accessibility constraints |
+
+**Commit action** in Exposure Planning mode triggers the LFUtx chain.
+
+---
+
+### Section 223 — Object List Schema (LOCKED)
+
+Left-panel object list fields — constant across all workspace modes:
+
+| Field | Editable | Source |
+|---|---|---|
+| Object ID | No | SCD |
+| RA | No | SCD |
+| Dec | No | SCD |
+| Common Name | No | SCD |
+| Object Class | No | SCD — tap to reveal SIMBAD otypes |
+| Size (Major / Minor / PA) | No | SCD |
+| Image URLs | Yes | SCD default, user-editable in SUD |
+| Notes | Yes | SCD curated + community + user personal |
+
+**Size display format:** `major × minor @ PA°`
+**Example:** `120′ × 100′ @ 0°`
+
+---
+
+### Section 224 — Position Angle Purpose (LOCKED)
+
+PA supports manual rotator workflows only. It is not used for graphical object rendering in SkyVu.
+
+**Primary uses:**
+- Grouping targets requiring similar camera rotation
+- Preserving rotation continuity across multi-night datasets
+
+**Example grouping by rotation:**
+```
+Rotation 105°:
+    NGC 7000
+    IC 5070
+    Sh2-119
+```
+
+---
+
+### Section 225 — Object Class and Image URL Behavior (LOCKED)
+
+**Object Class:** Not editable. Selecting the field reveals SIMBAD otypes — exposes deeper classification while preserving the SkyPix canonical class system.
+
+**Image URLs:** Editable in SUD. Default population during SCD → SUD ingestion from AstroBin gallery search for the object. Users may add or replace links.
+
+---
+
+### Section 226 — Notes Field Architecture (LOCKED)
+
+Notes field receives content from multiple sources:
+
+| Source | Resides in | Benefit |
+|---|---|---|
+| SkyPix curated notes | SCD | All users benefit |
+| Community contributions | SCD | All users benefit |
+| User personal notes | SUD | Private to user |
+
+Curated and community contributions reside in the SCD — shared knowledge accumulates over time. User-specific notes reside in SUD — private and non-propagating.
+
+---
+
+### Section 227 — Database Responsibility Confirmation (LOCKED)
+
+No schema changes this session. Responsibilities reaffirmed:
+
+**SCD — SkyPix Curated Database:**
+Object identity, coordinates, size (major/minor/PA), emission band strengths, classification, canonical metadata. Users do not directly edit SCD records.
+
+**SUD — SkyPix User Dataset:**
+Object selections, sort order, planning metadata, notes, imaging strategies, commit states, LFU coefficients. All sorting and planning operations occur within SUD only.
+
+**User object submission:** Submitted objects enter SCD quarantine layer for validation before promotion. Quarantine mechanics to be documented once ingestion workflows stabilize. Current rule: users cannot directly edit the SCD.
+
+---
+
+### Section 228 — Remaining Work Domains
+
+| Domain | Status |
+|---|---|
+| Terrain behavior modeling (Hα influence, W3 modulation, object humps, stellar illumination, emergent weather) | ⏳ Pending terrain construction |
+| Rig Kit (horizon polygon, zenith obstruction, dec circles, visibility arcs) | ⏳ Pending |
+| Camera Kit (specs, QE curves, pixel geometry, cooling) | ⏳ Pending |
+| Filter Kit (bandpass, transmission curves, eligibility) | ⏳ Pending |
+| SUD operational planning (session ordering, exposure strategies, LFU workflow) | ⏳ Pending |
+
+**Current bottleneck:** Terrain behavior quantification — determines how SkyVu renders discovery landscapes. No architectural blockers exist.
+
+---
+
+### Section 229 — Immediate Next Steps
+
+```
+1. Complete SHASSA tile acquisition
+2. Acquire VTSS tiles
+3. Apply pedestal removal and NII correction
+4. Execute VTSS → SHASSA calibration
+5. Integrate WHAM Hα map
+6. Construct NSIDE-2048 terrain
+7. Apply W3-guided Hα redistribution
+8. Generate first canonical terrain map: skypix_ha_terrain_n2048.fits
+```
+
+Once terrain construction is complete, SkyVu becomes the central discovery interface for the SkyPix ecosystem.
+
+---
+<!-- END PART LI -->
+
+LDD PATCH — Part LII: Schedule Rebase
+Apply after Part LI (SkyVu Architecture, Section 229)
+Date: 2026-03-09
+---
+PART LII — SCHEDULE REBASE (LOCKED 2026-03-09)
+Section 230 — Schedule Rebase Rationale
+The original April 10 beta target was set before the terrain architecture work was scoped. Parts XLV–LI represent significant architectural development that was not in the original plan but is essential to SkyPix's core value proposition. The terrain pipeline, SkyVu discovery interface, and WISE W3 morphology work were not optional — they make SkyPix substantially stronger than the original design.
+April 10 was never a hard external commitment. End of April was communicated informally to a small number of people. No external obligations are at risk.
+Revised beta target: End of May 2026
+---
+Section 231 — Revised Schedule (LOCKED 2026-03-09)
+Period	Focus	Deliverables
+March remainder	Terrain pipeline + schema review	skypix_ha_terrain_n2048.fits, SCD/SUD JSON schema reviewed
+April week 1–2	Object entry + SCD scrape	Object entry UI, SCD scrape pipeline
+April week 3–4	Rig Planner UI	Rig Planner component, Color Matrix, SUD implementation
+May week 1–2	SkyVu skeleton + terrain integration	SkyVu viewport, layer stack, terrain mist layer
+May week 3	SNR engine + exposure calculations	Full exposure planning functional
+May week 4	Integration, polish, beta prep	Bug fix, beta-quality finish
+End of May	Public Beta	
+---
+Section 232 — Critical Path Items
+Items that block everything downstream:
+```
+1. skypix_ha_terrain_n2048.fits    → blocks SkyVu visualization
+2. SCD/SUD JSON schema review      → blocks object entry and scrape
+3. Object entry + SCD scrape       → blocks SUD population
+4. SUD implementation              → blocks Rig Planner and SNR engine
+```
+Object entry and SCD scrape fell through the cracks during the terrain architecture sprint. This is the first item to address after terrain pipeline completes.
+---
+Section 233 — Architecture Advantage
+Zero UI code exists as of 2026-03-09. However the architecture is so thoroughly defined across Parts I–LI that when coding begins it will not be exploratory. Jim and Cathy are building to spec. This is worth several weeks of saved development time relative to a less-defined starting point.
+---
+<!-- END PART LII -->
+
+LDD PATCH — Part LIII: WHAM-Only Sky Hα Allocation — Finkbeiner Resampling
+Apply after Part LII (Schedule Rebase, Section 233)
+Date: 2026-03-09
+Supersedes: Section 212 merge rules (WHAM row), Section 213 W3 WHAM redistribution use
+---
+PART LIII — WHAM-ONLY Hα ALLOCATION (LOCKED 2026-03-09)
+Section 234 — Decision Background
+Correlation testing was conducted against survey Hα truth to evaluate candidate witness layers for sub-beam Hα reconstruction in WHAM-only sky regions:
+Predictor	Correlation
+WISE HII regions	~0.02
+SCD objects	~0.005
+OB ionization fields	~0.002
+Conclusion: No available witness layer can safely reconstruct sub-beam Hα structure in WHAM-only regions. W3-guided WHAM redistribution is retired. Any reconstruction attempt would inject noise, not signal.
+---
+Section 235 — Approved Solution: Finkbeiner Resampling (LOCKED)
+The Finkbeiner composite Hα map is treated as the canonical Hα envelope in WHAM-only sky. SkyPix resamples that surface onto the NSIDE-2048 terrain grid without additional reconstruction.
+Conceptual model:
+```
+WHAM beams → Finkbeiner smoothed surface (6′ grid)
+           → SkyPix samples surface at 1.7′ NSIDE-2048 centroids
+           → bilinear interpolation — continuous, no artificial peaks
+```
+No sub-beam Hα structure is inferred or reconstructed.
+---
+Section 236 — Revised Terrain Merge Rules (LOCKED — supersedes Section 212)
+For each NSIDE-2048 pixel:
+```
+if VTSS_calibrated exists:
+    use VTSS_calibrated
+
+elif SHASSA exists:
+    use arithmetic mean of contributing SHASSA pixels
+
+else:
+    resample Finkbeiner 6′ surface to NSIDE-2048 centroid
+    (bilinear interpolation)
+```
+Constraints:
+Continuous transitions between pixels
+No artificial peaks
+No witness-driven reconstruction
+Coarse WHAM gradients preserved
+---
+Section 237 — Terrain Philosophy (LOCKED)
+```
+Survey truth (SHASSA / VTSS) → authoritative pixel values
+WHAM-only regions             → coarse envelope, resampled from Finkbeiner
+```
+SkyPix does not attempt sub-beam Hα reconstruction. Physical honesty takes precedence over apparent resolution. The Finkbeiner surface is consistent with the philosophy of the composite — it is already the best available smooth representation of WHAM measurements.
+---
+Section 238 — W3 Role Correction
+W3-guided WHAM redistribution is retired (was one of four W3 uses in Section 213).
+W3 remaining roles (unchanged):
+Guide SkyVu Milky Way morphology visualization
+Modulate object mist layers
+Maintain visual terrain realism at all zoom levels
+W3 no longer participates in Hα flux redistribution.
+---
+Section 239 — Next Step
+Implementation of terrain projection script:
+```
+Map Finkbeiner 6′ surface → SkyPix NSIDE-2048 grid
+Method: bilinear interpolation at pixel centroids
+Output: WHAM-only pixels in skypix_ha_terrain_n2048.fits
+```
+---
+<!-- END PART LIII -->
+
+LDD PATCH — Part LIV: SkyVu Renderer Architecture & Technology Stack
+Apply after Part LIII (WHAM Finkbeiner, Section 239)
+Date: 2026-03-09
+Authored by: Jim (ChatGPT) — Engineering Synthesis
+---
+PART LIV — SkyVu RENDERER ARCHITECTURE (LOCKED 2026-03-09)
+Section 240 — SkyVu Operating Roles
+SkyVu supports three distinct operational modes. Each places different demands on the renderer.
+Discovery Mode
+```
+Goal: find objects in a region of sky
+Workflow:
+    zoom into sky region
+    cursor reports RA/Dec continuously
+    click-drag defines radial search region
+    region → database query
+    returned objects populate object matrix
+Active layers: Hα terrain, object class overlays (EN, DN, PN, etc.)
+```
+Session Planning Mode
+```
+Goal: determine what objects are imageable from a specific rig on a specific night
+Additional elements:
+    rig horizon polygon
+    zenith obstruction polygon
+    declination bands
+    hour-angle hash marks
+    time slider + date slider
+    lunar position + lunar avoidance cone
+Sky rendered for exact rig location — rise/set and obstruction events
+must occur at geometrically correct times.
+```
+Project Planning Mode
+```
+Goal: long-range imaging project planning
+Characteristics:
+    sky evolves by date, not time
+    objects at appropriate annual positions
+    seasonal observability over one full year
+```
+---
+Section 241 — Coordinate Accuracy Requirements (LOCKED)
+SkyVu operates as a location-specific sky simulator, not a visual map.
+Required transformations:
+```
+RA/Dec → Alt/Az → dome projection
+Inputs: rig latitude/longitude, date, time
+```
+Geometrically correct:
+Rise and set times
+Horizon crossings
+Zenith obstruction intersections
+Visibility arcs
+Rig horizon segments are straight lines in local coordinates but must be projected onto the celestial sphere as curves.
+Accuracy expectation: minutes of time — not approximate visuals.
+---
+Section 242 — Lunar Dynamics (LOCKED)
+Lunar layer is active in session planning mode only.
+Renderer must compute:
+Current moon position
+Lunar motion through session window
+Path of moon through current lunar cycle
+User-defined lunar avoidance cone
+Moon moves 1–3° during an 8-hour session. Position must update accurately throughout.
+Lunar path precomputed within session window for performance.
+---
+Section 243 — Terrain Rendering Constraints (LOCKED)
+```
+Terrain: skypix_ha_terrain_n2048.fits
+Resolution: NSIDE 2048 / ≈ 1.7′ spatial scale
+```
+Zoom limit corresponds to terrain resolution — display pixels must not represent sub-resolution detail. Terrain sampled only at display resolution (bounded by 1080×1080 viewport).
+---
+Section 244 — Layer Rendering Languages (LOCKED)
+Layer type	Examples	Rendering method
+Field layers	Hα terrain, dust terrain	Opacity fields
+Structure layers	EN, DN	Gaussian contour fields centred on objects
+Point layers	PN, galaxies, clusters, OB stars	Point glyphs with optional halos
+Operational layers	Horizon, zenith obstruction, dec bands, lunar path	Geometric overlays
+---
+Section 245 — Interaction Requirements (LOCKED)
+Within the 1080×1080 SkyVu viewport:
+Interaction	Result
+Mouse move	RA/Dec readout continuous
+Mouse click-drag	Sky region selection
+Mouse wheel	Controlled zoom regimes
+Layer tab tap	Enable/disable overlay
+Gamma bead slide	Layer gamma adjustment
+Time/date slider	Sky motion update
+---
+Section 246 — Technology Stack (LOCKED)
+Component	Technology	Role
+Primary language	Python	Application logic
+Desktop UI framework	PySide6 (Qt)	Window, widgets, event loop
+Astronomical transforms	Astropy	RA/Dec → Alt/Az, coordinate accuracy
+HEALPix terrain	astropy-healpix	Terrain sampling at display resolution
+Numerical operations	NumPy	High-performance array operations
+Sky viewport	Custom SkyVu renderer widget	Dedicated drawing surface
+Rendering approach: CPU raster rendering via Qt painting tools for V1. If performance demands require it, the drawing layer migrates to OpenGL without rewriting surrounding architecture. OpenGL migration is an escape hatch, not a plan.
+Why not existing astronomy viewers: Stellarium, Aladin, and WorldWide Telescope are optimized for survey imagery and catalog markers. SkyVu requires custom HEALPix terrain, Gaussian object fields, rig-specific horizon geometry, region-based search interaction, and planner overlays. A custom renderer is required.
+---
+Section 247 — First Production Milestone (LOCKED)
+Initial renderer targets geometry correctness before visual polish.
+Milestone objectives:
+```
+1. Accurate RA/Dec → Alt/Az transformation
+2. Correct dome projection
+3. Rig horizon rendering
+4. Object plotting
+5. Cursor coordinate reporting
+6. Region selection via mouse drag
+```
+Terrain and contour layers added after geometry is validated.
+---
+Section 248 — Construction State (2026-03-09)
+Component	Status
+Technology stack	✅ Locked
+Operating mode definitions	✅ Locked
+Coordinate accuracy requirements	✅ Locked
+Layer rendering languages	✅ Locked
+Interaction requirements	✅ Locked
+First production milestone defined	✅ Locked
+SkyVu renderer implementation	⏳ Pending — April build phase
+---
+Section 249 — Technology Stack Licensing (LOCKED)
+Component	License	Commercial Status
+Python	PSF License	✅ Free, no restrictions
+Astropy	BSD	✅ Free, no restrictions
+astropy-healpix	BSD	✅ Free, no restrictions
+NumPy	BSD	✅ Free, no restrictions
+PySide6	LGPL	⚠️ Review required before commercial ship
+PySide6 licensing flag:
+LGPL permits commercial use provided SkyPix dynamically links Qt (standard deployment model). However a formal legal read is required before V1 ships commercially. This is a pre-ship gate, not a blocker for development.
+Fallback if PySide6 LGPL creates commercial friction:
+PyQt6 — identical API to PySide6, same functionality, commercial license ~$550 one-time. Migration cost is trivial — same code, different import name. Zero architectural impact.
+Alternative stack options evaluated:
+Option	License	Assessment
+PyQt6	Commercial ~$550	Clean drop-in if PySide6 flagged
+wxPython	wxWindows (commercial-friendly)	Viable, less polished, smaller community
+Dear PyGui	MIT	GPU-accelerated, promising, not yet mature
+Kivy	MIT	Touch/mobile optimized — not appropriate
+Tkinter	Python (free)	Too primitive for custom renderer
+Decision: Proceed with PySide6 for development. Obtain legal read on LGPL dynamic linking before V1 commercial ship. PyQt6 at $550 is the clean fallback with zero code changes required.
+---
+<!-- END PART LIV -->
+
+LDD VERSION: 2026-03-09-D  |  PARTS: XL–LIV  |  VERIFY: BROADBAND-PATH-LOCKED
+
 
 
