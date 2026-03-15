@@ -1,0 +1,12 @@
+Spectral Helasth Check:
+select
+  primary_id,
+  skypix_object_class,
+  presence_mask,
+  ha_strength
+from objects
+where skypix_object_class in ('EN','PN','SNR','WR')
+  and ha_strength is not null
+  and coalesce(presence_mask,0) = 0;
+
+  expect 0 rows -- meaning all objects of those classes have spectra 
