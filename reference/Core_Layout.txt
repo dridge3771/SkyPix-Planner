@@ -1,0 +1,89 @@
+var SkyPix = this.SkyPix || (this.SkyPix = {});
+
+/** Merge and style a full-width band on a single row. */
+SkyPix.ensureBand = function ensureBand(sh, row, opts) {
+  var w = Math.max(2, sh.getLastColumn());
+  var r = sh.getRange(row, 1, 1, w);
+  try { r.breakApart().merge(); } catch (_) {}
+  r.setBackground((opts && opts.bg) || '#666')
+   .setFontColor('#fff')
+   .setFontWeight('bold')
+   .setFontSize((opts && opts.size) || 12)
+   .setHorizontalAlignment('center')
+   .setVerticalAlignment('middle')
+   .setValue((opts && opts.text) || '');
+};
+
+/** Merge every left/right data pair across [rowStart..rowEnd]. */
+SkyPix.ensurePairedMerges = function ensurePairedMerges(sh, rowStart, rowEnd, leftCol) {
+  var w = Math.max(2, sh.getLastColumn());
+  var lc = leftCol || 2;
+  for (var r = rowStart; r <= rowEnd; r++) {
+    try { sh.getRange(r, 1, 1, w).breakApart(); } catch (_) {}
+    for (var c = lc; c <= w; c += 2) {
+      try {
+        sh.getRange(r, c, 1, 2).merge()
+          .setHorizontalAlignment('center')
+          .setVerticalAlignment('middle');
+      } catch (_) {}
+    }
+  }
+};
+
+/** Set column widths and row heights deterministically. */
+SkyPix.applyGridMetrics = function applyGridMetrics(sh, metrics) {
+  var w = Math.max(2, sh.getLastColumn());
+  if (metrics.colA) sh.setColumnWidth(1, metrics.colA);
+  if (metrics.data && w >= 2) sh.setColumnWidths(2, w - 1, metrics.data);
+  if (metrics.rowH) {
+    var maxR = Math.min(sh.getMaxRows(), metrics.maxRows || 140);
+    for (var r = 2; r <= maxR; r++) sh.setRowHeight(r, metrics.rowH);
+  }
+};
+
+/** Style a subheader row that is pair-merged (e.g., row 3). */
+SkyPix.styleSubheaderPairs = function styleSubheaderPairs(sh, row, size) {
+  var w = Math.max(2, sh.getLastColumn());
+  try { sh.getRange(row, 1, 1, w).breakApart(); } catch (_) {}
+  for (var c = 2; c <= w; c += 2) {
+    sh.getRange(row, c, 1, 2)
+      .merge()
+      .setFontSize(size || 12)
+      .setFontColor('#fff')
+      .setFontWeight('bold')
+      .setHorizontalAlignment('center')
+      .setVerticalAlignment('middle');
+  }
+};
+
+// already shipped earlier:
+var SkyPix = this.SkyPix || (this.SkyPix = {});
+
+SkyPix.ensureBand = function(sh, row, opts) { /* ... (as sent) ... */ };
+SkyPix.ensurePairedMerges = function(sh, rowStart, rowEnd, leftCol) { /* ... */ };
+SkyPix.applyGridMetrics = function(sh, metrics) { /* ... */ };
+SkyPix.styleSubheaderPairs = function(sh, row, size) { /* ... */ };
+
+// add/keep the shadifier (HPC@20 etc.)
+SkyPix.shade = function(hex, pct){ // pct in [0..1], 0.20 = 20% original, 80% white
+  function h2i(h){ return parseInt(h,16); }
+  function pad(n){ var s=n.toString(16); return s.length===1?'0'+s:s; }
+  hex=(hex||'#6aa5d9').replace('#','');
+  var r=h2i(hex.slice(0,2)), g=h2i(hex.slice(2,4)), b=h2i(hex.slice(4,6));
+  var nr=Math.round(r*pct+255*(1-pct)), ng=Math.round(g*pct+255*(1-pct)), nb=Math.round(b*pct+255*(1-pct));
+  return '#'+pad(nr)+pad(ng)+pad(nb);
+};
+
+var SkyPix = this.SkyPix || (this.SkyPix = {});
+
+SkyPix.setA3Dropdown = function(sheetName, options, placeholder){
+  var sh = SpreadsheetApp.getActive().getSheetByName(sheetName); if (!sh) return;
+  var list = (options || []).slice();
+  var hint = placeholder || '— select —';
+  if (!list.length || list[0] !== hint) list.unshift(hint);
+  var rule = SpreadsheetApp.newDataValidation()
+              .requireValueInList(list, true).setAllowInvalid(true).build();
+  sh.getRange(3,1).setDataValidation(rule).setValue(hint)
+    .setHorizontalAlignment('left'); // A3 stays HPC band styling, left per your spec
+};
+

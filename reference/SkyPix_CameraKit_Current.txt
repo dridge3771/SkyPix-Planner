@@ -1,0 +1,881 @@
+/** ============================================  CAMERA KIT  =================================
+ * SkyPix Planner — CAMERA KIT (Full Standalone, Add-Camera Logging, CK-namespaced constants)
+ * Drop-in, self-contained Apps Script. Constants that commonly collide are namespaced (CK_*).
+ * Implements:
+ *  - Build/Refresh Camera Kit
+ *  - Add Camera (paired columns) + robust logging to "Dev Log"
+ *  - Delete Camera by blanking NAME in row 3 (confirm → remove pair)
+ *  - Acknowledge Defaults row + spacer
+ *  - Quantum Efficiency Curve (5 λ/QE% rows) + spacer
+ *  - Rig Eligibility triplets (Checkbox / FOV (arcmin) / Image Scale (″/px))
+ *  - Camera color picker row → paints band @ 20%
+ *  - Recompute FOV/Scale on edits to Pixel Size / Sensor size
+ *  - OnEdit handler + simple refresh label
+ *
+ * ENTRY POINTS:
+ *   - SkyPix_BuildCameraKit()
+ *   - buildCameraKit_()              (legacy alias via refreshCameraKit_())
+ *   - SkyPix_CameraKit_OnEdit_(e)
+ *
+ * NOTE: If your project already has a global writeRefreshLabel_, this file uses
+ *       camerakit_writeRefreshLabel_ locally to avoid any symbol collision.
+ */
+
+/* ========================= CONFIG & CK-* CONSTANTS ========================= */
+const CK_TITLE_FS = 16;   // was TITLE_FS
+const CK_HEADER_FS = 12;  // was HEADER_FS
+const CK_LABEL_FS = 10;   // was LABEL_FS
+const CK_REFRESH_FS = 12; // was REFRESH_FS
+
+const CK_WARN_YELLOW = '#FFF2CC';
+const CK_DARK_GREY_FONT = '#333333';
+const CK_ROW_H_ALL = 28;
+
+const CK_REFRESH_NEUTRAL_BG = '#E8EEF7';
+const CK_REFRESH_CHOICES_CAMERA = ['Refresh planner', 'Retrieve specifications', 'Cancel'];
+
+/* Non-namespaced (unlikely to collide, but can rename if needed) */
+const CK_COLOR_PICKER = [
+  ['Steel Blue', '#4682B4'], ['Sky Blue', '#87CEEB'], ['Coral', '#FF7F50'],
+  ['Gold', '#FFD700'], ['Lime Green', '#32CD32'], ['Violet', '#EE82EE'],
+  ['Tomato', '#FF6347'], ['Slate Gray', '#708090'], ['Dodger Blue', '#1E90FF'],
+  ['Orchid', '#DA70D6'], ['Sea Green', '#2E8B57'], ['Firebrick', '#B22222'],
+  ['Forest Green', '#228B22'], ['Midnight Blue', '#191970'], ['Sandy Brown', '#F4A460']
+];
+
+const CK = {
+  NAME: 'Camera Kit',
+  LABEL_START: 4,
+  ROWS: { COLOR: 13, ACK: 15, BLANK: 16, QE_HDR: 17, RIG_HDR: null }
+};
+
+const CK_LABELS = [
+  'Camera Model',
+  'Pixel Size (um)',
+  'Sensor size (pixels)',
+  'Quantum Efficiency (%)',
+  'Read Noise (e-)',
+  'Dark Current (e-/s)',
+  'Full Well Capacity (e-)',
+  'Cooling Delta (degC)',
+  'Optimal Gain',
+  'Camera Highlight Color'
+];
+
+const QE = { HDR_TEXT: 'Quantum Efficiency Curve', NPAIRS: 5 };
+const RIG = { HDR_TEXT: 'Rig Eligibility' };
+
+/* ========================= DEV LOGGING ========================= */
+const CK_LOG_TO_SHEET = true;   // set false to only use Logger
+const CK_LOG_SHEET = 'Dev Log';
+
+function ck_log_(msg, ctx) {
+  const stamp = new Date().toISOString();
+  const line = `[${stamp}] ${ctx ? '[' + ctx + '] ' : ''}${msg}`;
+  try { Logger.log(line); } catch (_) {}
+  if (!CK_LOG_TO_SHEET) return;
+  try {
+    const ss = SpreadsheetApp.getActive();
+    const sh = ss.getSheetByName(CK_LOG_SHEET) || ss.insertSheet(CK_LOG_SHEET);
+    sh.appendRow([stamp, ctx || '', msg]);
+  } catch (e) {
+    try { Logger.log('DevLog failed: ' + e); } catch (_) {}
+  }
+}
+
+/* ========================= HELPERS ========================= */// ===== SAFE MERGE HELPERS =====
+function ck_unmergeAll_(sh) {
+  try {
+    const merged = sh.getMergedRanges() || [];
+    for (var i = 0; i < merged.length; i++) {
+      try { merged[i].breakApart(); } catch (_) {}
+    }
+  } catch (_) {}
+}
+
+function ck_safeMergeRange_(rng) {
+  try { rng.breakApart(); } catch (_) {}
+  try { rng.merge(); } catch (_) {}
+  return rng;
+}
+
+function ck_safeMergeFullWidthRow_(sh, row) {
+  try {
+    const maxCol = sh.getLastColumn();
+    if (maxCol < 2) return;
+
+    const r = sh.getRange(row, 1, 1, maxCol);
+
+    // Always cleanup first — this prevents Google Sheets merge errors
+    try { r.breakApart(); } catch(e) {}
+
+    // Ensure the whole row merges cleanly
+    r.merge();
+
+  } catch (err) {
+    Logger.log('ck_safeMergeFullWidthRow_ error row ' + row + ': ' + err);
+  }
+}
+
+// ===== SAFE MERGE HELPERS =====
+function ck_unmergeAll_(sh) {
+  try {
+    const merged = sh.getMergedRanges() || [];
+    for (var i = 0; i < merged.length; i++) {
+      try { merged[i].breakApart(); } catch (_) {}
+    }
+  } catch (_) {}
+}
+
+function ck_safeMergeRange_(rng) {
+  try { rng.breakApart(); } catch (_) {}
+  try { rng.merge(); } catch (_) {}
+  return rng;
+}
+
+function ck_safeMergeFullWidthRow_(sh, row) {
+  try {
+    const width = Math.max(1, sh.getMaxColumns());
+    // Unmerge anything touching this row (Sheets requires full selection)
+    try {
+      const merged = sh.getMergedRanges() || [];
+      for (var i = 0; i < merged.length; i++) {
+        const m = merged[i];
+        const r1 = m.getRow(), r2 = r1 + m.getNumRows() - 1;
+        if (row >= r1 && row <= r2) { try { m.breakApart(); } catch (_) {} }
+      }
+    } catch (_) {}
+    ck_safeMergeRange_(sh.getRange(row, 1, 1, width));
+  } catch (_) {}
+}
+
+function camerakit_clearRow_(sh, row) {
+  const width = Math.max(1, sh.getLastColumn());
+  // Break apart any merged range that touches this row
+  try {
+    (sh.getMergedRanges() || []).forEach(m => {
+      const r1 = m.getRow(), r2 = r1 + m.getNumRows() - 1;
+      if (row >= r1 && row <= r2) { try { m.breakApart(); } catch (_) {} }
+    });
+  } catch (_) {}
+  // Clear content/format but DO NOT merge
+  sh.getRange(row, 1, 1, width).clearContent().clearFormat();
+}
+
+
+function ck_nameToHex_(name) {
+  const n = (name || '').toLowerCase().trim();
+  for (let i = 0; i < CK_COLOR_PICKER.length; i++) {
+    if (CK_COLOR_PICKER[i][0].toLowerCase() === n) return CK_COLOR_PICKER[i][1];
+  }
+  if (/^#?[0-9a-f]{6}$/i.test(n)) return n[0] === '#' ? n : ('#' + n);
+  return '';
+}
+
+function ck_hexIsDark_(hex) {
+  try {
+    if (!hex) return false;
+    if (hex[0] !== '#') hex = '#' + hex;
+    const r = parseInt(hex.substr(1,2),16),
+          g = parseInt(hex.substr(3,2),16),
+          b = parseInt(hex.substr(5,2),16);
+    const yiq = (r*299 + g*587 + b*114)/1000;
+    return yiq < 140;
+  } catch (_) { return false; }
+}
+
+function ck_hpcShade(hex, pct) {
+  try {
+    if (!hex) return '#eeeeee';
+    if (hex[0] !== '#') hex = '#' + hex;
+    const amt = Math.max(0, Math.min(100, pct)) / 100;
+    const r = parseInt(hex.substr(1,2),16),
+          g = parseInt(hex.substr(3,2),16),
+          b = parseInt(hex.substr(5,2),16);
+    const R = Math.round(r + (255 - r)*amt),
+          G = Math.round(g + (255 - g)*amt),
+          B = Math.round(b + (255 - b)*amt);
+    return '#' + [R,G,B].map(v => ('0'+v.toString(16)).slice(-2)).join('');
+  } catch (_) { return hex || '#eeeeee'; }
+}
+
+function ck_leftLabel_(rng) {
+  try { return rng.setFontWeight('bold').setHorizontalAlignment('left').setVerticalAlignment('middle'); }
+  catch (_) { return rng; }
+}
+function ck_rightLabel_(rng) {
+  try { return rng.setFontWeight('bold').setHorizontalAlignment('right').setVerticalAlignment('middle'); }
+  catch (_) { return rng; }
+}
+function ck_center_(rng) {
+  try { return rng.setHorizontalAlignment('center').setVerticalAlignment('middle'); }
+  catch (_) { return rng; }
+}
+function ck_styleSubheader_(rng, fontColor) {
+  try { return rng.setFontWeight('bold').setFontColor(fontColor || '#000000').setFontSize(CK_HEADER_FS); }
+  catch (_) { return rng; }
+}
+function ck_stylePaddedCell_(rng, txt, bg, fg, bold) {
+  try {
+    rng.setValue(txt).setBackground(bg);
+    if (fg) rng.setFontColor(fg);
+    if (bold) rng.setFontWeight('bold');
+    return ck_center_(rng);
+  } catch (_) { return rng; }
+}
+function ck_mergeFullWidthRow_(sh, row) {
+  const width = Math.max(1, sh.getMaxColumns());
+  try {
+    (sh.getMergedRanges() || []).forEach(m => {
+      const r1 = m.getRow(), r2 = r1 + m.getNumRows() - 1;
+      if (row >= r1 && row <= r2) { try { m.breakApart(); } catch (_) {} }
+    });
+  } catch (_) {}
+  try { sh.getRange(row, 1, 1, width).merge(); } catch (_) {}
+}
+
+// === Fix position + layout of "Acknowledge Defaults" as a data row (no full-row merge) ===
+function camerakit_fixAckRow_(sh) {
+  if (!sh || sh.getName() !== CK.NAME) return;
+
+  const width  = ck_getActiveWidth_(sh);
+  const rigHdr = ck_findRowWithText_(sh, 'Rig Eligibility');
+  if (!rigHdr) return;
+
+  const desiredAck = rigHdr - 2;   // [ACK] [blank spacer] [Rig Eligibility]
+  const desiredBlank = rigHdr - 1;
+
+  // Ensure the ACK label exists at desiredAck (insert/move if needed)
+  const currentAck = ck_findRowWithText_(sh, 'Acknowledge Defaults');
+  if (currentAck === null || currentAck === undefined) {
+    // Insert a new row for ACK
+    sh.insertRowsBefore(desiredAck, 1);
+    sh.getRange(desiredAck, 1).setValue('Acknowledge Defaults');
+  } else if (currentAck !== desiredAck) {
+    // Move existing ACK row to desiredAck
+    const vals = sh.getRange(currentAck, 1, 1, Math.max(1, width)).getValues();
+    const notes = sh.getRange(currentAck, 1, 1, Math.max(1, width)).getNotes();
+    try { sh.deleteRow(currentAck); } catch (_) {}
+    sh.insertRowsBefore(desiredAck, 1);
+    sh.getRange(desiredAck, 1, 1, Math.max(1, width)).setValues(vals).setNotes(notes);
+  }
+
+  // Clear/normalize the whole ACK row (make sure it is NOT full-row merged)
+  try {
+    (sh.getMergedRanges() || []).forEach(m => {
+      const r1 = m.getRow(), r2 = r1 + m.getNumRows() - 1;
+      if (desiredAck >= r1 && desiredAck <= r2) { try { m.breakApart(); } catch(_){} }
+    });
+  } catch (_) {}
+
+  // Style label cell A and set font
+  sh.getRange(desiredAck, 1).setValue('Acknowledge Defaults')
+    .setFontWeight('bold').setFontSize(CK_LABEL_FS);
+
+  // Build one checkbox per camera pair (merge each pair safely)
+  for (let c = 2; c <= width; c += 2) {
+    const span = Math.min(2, width - c + 1);
+    ck_safeMergeRange_(sh.getRange(desiredAck, c, 1, span))
+      .insertCheckboxes()
+      .setHorizontalAlignment('center');
+  }
+
+  // Ensure the spacer row immediately below ACK exists and is blank (no merges)
+  if (desiredBlank > 0) {
+    // If row content exists (because we moved ACK), clear it
+    sh.getRange(desiredBlank, 1, 1, Math.max(1, width)).clearContent().clearFormat();
+    try {
+      (sh.getMergedRanges() || []).forEach(m => {
+        const r1 = m.getRow(), r2 = r1 + m.getNumRows() - 1;
+        if (desiredBlank >= r1 && desiredBlank <= r2) { try { m.breakApart(); } catch(_){} }
+      });
+    } catch (_) {}
+  }
+}
+
+function ck_getActiveWidth_(sh) {
+  // Camera blocks are 2-wide, titled on row 3 at columns B, D, F...
+  // We stop at the first missing header and return the last valid pair.
+  const max = sh.getMaxColumns();
+  let lastPairEnd = 1;               // at least column A exists
+  for (let c = 2; c <= max; c += 2) {
+    const label = (sh.getRange(3, c).getDisplayValue() || '').toString().trim();
+    if (!label) break;               // no more camera blocks
+    lastPairEnd = Math.min(max, c + 1);
+  }
+  return Math.max(2, lastPairEnd);   // at least B exists
+}
+
+function camerakit_getBlocks_(sh) {
+  const width = ck_getActiveWidth_(sh);
+  const starts = [];
+  for (let c = 2; c <= width; c += 2) starts.push(c);
+  return { starts, span: 2, width };
+}
+
+function ck_findRowWithText_(sh, txt) {
+  const last = Math.min(800, sh.getMaxRows());
+  for (let r = 1; r <= last; r++) {
+    if ((sh.getRange(r,1).getDisplayValue() || '').trim() === txt) return r;
+  }
+  return null;
+}
+
+function ck_getPairsFromHeaders_(sh) {
+  const width = ck_getActiveWidth_(sh), pairs = [];
+  for (let c = 2; c <= width; c += 2) pairs.push([c, c+1]);
+  return pairs;
+}
+
+// ===== SAFE MERGE HELPERS =====
+function ck_unmergeAll_(sh) {
+  try {
+    (sh.getMergedRanges() || []).forEach(r => { try { r.breakApart(); } catch (_) {} });
+  } catch (_) {}
+}
+
+function ck_safeMergeRange_(rng) {
+  try { rng.breakApart(); } catch (_) {}
+  try { rng.merge(); } catch (_) {}
+  return rng;
+}
+
+function ck_safeMergeFullWidthRow_(sh, row) {
+  try {
+    const width = Math.max(1, sh.getMaxColumns());
+    // Unmerge any merged range that touches this row (Sheets requires full selection)
+    try {
+      (sh.getMergedRanges() || []).forEach(m => {
+        const r1 = m.getRow(), r2 = r1 + m.getNumRows() - 1;
+        if (row >= r1 && row <= r2) { try { m.breakApart(); } catch (_) {} }
+      });
+    } catch (_) {}
+    ck_safeMergeRange_(sh.getRange(row, 1, 1, width));
+  } catch (err) {
+    try { ck_log_('ck_safeMergeFullWidthRow_ failed on row ' + row + ': ' + err); } catch (_) {}
+  }
+}
+
+/* ========================= RIG DATA (standalone) ========================= */
+function ck_getRigData_() {
+  const ss = SpreadsheetApp.getActive();
+  const rSh = ss.getSheetByName('Rig kit') || ss.getSheetByName('Rig Kit');
+  if (!rSh) return [{ name: 'Sample Rig', color: '#6aa5d9', focalLength: 500 }];
+
+  const width = ck_getActiveWidth_(rSh);
+  const names = rSh.getRange(3, 2, 1, Math.max(1, width - 1)).getDisplayValues()[0];
+
+  const colorRow = ck_findRowWithText_(rSh, 'Rig highlight color') || ck_findRowWithText_(rSh, 'Rig Color (Picker)');
+  const colors = colorRow ? rSh.getRange(colorRow, 2, 1, Math.max(1, width - 1)).getDisplayValues()[0] : [];
+
+  const flRow = ck_findRowWithText_(rSh, 'Effective focal length (mm)');
+  const focals = flRow ? rSh.getRange(flRow, 2, 1, Math.max(1, width - 1)).getDisplayValues()[0] : [];
+
+  const rigs = [];
+  for (let i = 0; i < names.length; i += 2) {
+    const nm = String(names[i] || '').trim();
+    if (!nm) continue;
+    rigs.push({
+      name: nm,
+      color: String((colors[i] || '')).trim(),
+      focalLength: parseFloat(String((focals[i] || '')).replace(',', '.')) || 0
+    });
+  }
+  if (!rigs.length) rigs.push({ name: 'Sample Rig', color: '#6aa5d9', focalLength: 500 });
+  return rigs;
+}
+
+/* ========================= BUILD / REFRESH ========================= */
+function buildCameraKit_(ss) {
+  const ctx = 'buildCameraKit_';
+  ck_log_('Begin', ctx);
+
+  ss = ss || SpreadsheetApp.getActive();
+  const sh = ss.getSheetByName(CK.NAME) || ss.insertSheet(CK.NAME);
+
+  // Start from a truly clean slate: contents, formats, merges.
+  try { sh.clear(); } catch (_) {}
+  ck_unmergeAll_(sh);
+
+  // Ensure a sane canvas
+  while (sh.getMaxColumns() < 6) sh.insertColumnAfter(sh.getMaxColumns());
+  sh.setColumnWidth(1, 200).setColumnWidths(2, sh.getMaxColumns() - 1, 70);
+  sh.setRowHeights(1, 3, 36);
+  sh.setRowHeights(4, Math.max(0, sh.getMaxRows() - 3), CK_ROW_H_ALL);
+
+  // Title (full-width, safe merge)
+  ck_safeMergeFullWidthRow_(sh, 1);
+  sh.getRange('A1')
+    .setValue('Camera Kit')
+    .setFontSize(CK_TITLE_FS)
+    .setFontWeight('bold');
+
+  // Refresh bar (row 2) – safe merge later when we write it
+  // Add Camera control + first header
+  const dv = SpreadsheetApp.newDataValidation()
+    .requireValueInList(['Add Camera', 'Cancel'], true)
+    .setAllowInvalid(true)
+    .build();
+  sh.getRange('A3').setDataValidation(dv);
+
+  // Header "Camera 1" over B:C (safe pair merge)
+  ck_safeMergeRange_(sh.getRange(3, 2, 1, 2))
+    .setValue('Camera 1')
+    .setHorizontalAlignment('center')
+    .setVerticalAlignment('middle')
+    .setFontWeight('bold');
+
+  
+  // Left labels
+  for (let i = 0; i < CK_LABELS.length; i++) {
+    ck_leftLabel_(sh.getRange(CK.LABEL_START + i, 1)).setValue(CK_LABELS[i]).setWrap(true).setFontSize(CK_LABEL_FS);
+  }
+
+  // Pixel/Sensor helpers
+  ck_center_(sh.getRange(6, 2)).setValue('Width').setFontSize(10);
+  ck_center_(sh.getRange(6, 3)).setValue('Height').setFontSize(10);
+
+  // Entry warnings & validators
+  sh.getRange(CK.LABEL_START, 2, 9, 2).setBackground(CK_WARN_YELLOW);
+  const v = SpreadsheetApp.newDataValidation;
+  sh.getRange(CK.LABEL_START + 1, 2, 1, 2).setDataValidation(v().requireNumberBetween(1.0, 15.0).setAllowInvalid(true).build());
+  sh.getRange(CK.LABEL_START + 2, 2, 1, 2).setDataValidation(v().requireNumberGreaterThan(0).setAllowInvalid(true).build());
+  sh.getRange(CK.LABEL_START + 3, 2, 1, 2).setDataValidation(v().requireNumberBetween(20, 99).setAllowInvalid(true).build());
+  sh.getRange(CK.LABEL_START + 4, 2, 1, 2).setDataValidation(v().requireNumberBetween(0.2, 20.0).setAllowInvalid(true).build());
+  sh.getRange(CK.LABEL_START + 5, 2, 1, 2).setDataValidation(v().requireNumberBetween(0, 4.0).setAllowInvalid(true).build());
+  sh.getRange(CK.LABEL_START + 6, 2, 1, 2).setDataValidation(v().requireNumberGreaterThan(1000).setAllowInvalid(true).build());
+  sh.getRange(CK.LABEL_START + 7, 2, 1, 2).setDataValidation(v().requireNumberBetween(-60, 40).setAllowInvalid(true).build());
+  sh.getRange(CK.LABEL_START + 8, 2, 1, 2).setDataValidation(v().requireNumberGreaterThanOrEqualTo(0).setAllowInvalid(true).build());
+
+  applyCameraPairMerges_(sh, 2);
+  camerakit_fixAckRow_(sh);
+
+  // Color pickers (row 13)
+  const width = ck_getActiveWidth_(sh);
+  sh.getRange(13, 2, 1, Math.max(1, width - 1))
+    .setDataValidation(SpreadsheetApp.newDataValidation()
+      .requireValueInList(CK_COLOR_PICKER.map(r => r[0]), true)
+      .setAllowInvalid(true).build());
+
+  // Acknowledge Defaults
+// Dynamic blank under ACK — leave it UNMERGED
+camerakit_clearRow_(sh, CK.ROWS.BLANK);
+
+sh.getRange(CK.ROWS.ACK, 1)
+  .setValue('Acknowledge Defaults')
+  .setFontWeight('bold')
+  .setFontSize(CK_LABEL_FS);
+
+// use existing width from above; don't redeclare
+for (let c = 2; c <= width; c += 2) {
+  ck_safeMergeRange_( sh.getRange(CK.ROWS.ACK, c, 1, Math.min(2, width - c + 1)) )
+    .insertCheckboxes()
+    .setHorizontalAlignment('center');
+}
+
+// Dynamic blank under ACK — leave it UNMERGED
+camerakit_clearRow_(sh, CK.ROWS.BLANK);
+
+  // QE header + 5 rows
+  ck_safeMergeFullWidthRow_(sh, CK.ROWS.QE_HDR);
+  sh.getRange(CK.ROWS.QE_HDR, 1).setValue(QE.HDR_TEXT);
+  ck_styleSubheader_(sh.getRange(CK.ROWS.QE_HDR, 1, 1, ck_getActiveWidth_(sh)), CK_DARK_GREY_FONT);
+  insertQECurvePairs_(sh, CK.ROWS.QE_HDR + 1);
+
+  // Spacer under QE
+  sh.insertRowAfter(CK.ROWS.QE_HDR + QE.NPAIRS);
+  const rigHdr = CK.ROWS.QE_HDR + QE.NPAIRS + 2;
+  CK.ROWS.RIG_HDR = rigHdr;
+
+  // Rig Eligibility header
+  ck_safeMergeFullWidthRow_(sh, rigHdr);
+  sh.getRange(rigHdr, 1).setValue(RIG.HDR_TEXT);
+  ck_styleSubheader_(sh.getRange(rigHdr, 1, 1, ck_getActiveWidth_(sh)), CK_DARK_GREY_FONT);
+
+  sh.setFrozenRows(3);
+
+  recolorCameraKitBands_(sh);
+  camerakit_normalizeNow_();
+  rebuildRigEligibility_Camera_();
+  camera_setRefreshChoices_();
+
+  ck_log_('Completed', ctx);
+  return true;
+}
+
+// Legacy alias
+function refreshCameraKit_() { return buildCameraKit_(); }
+
+/* ========================= FORMAT & COLORING ========================= */
+function applyCameraPairMerges_(sh, cL) {
+  [4, 5, 7, 8, 9, 10, 11, 12, 13].forEach(r => {
+    try { ck_safeMergeRange_(sh.getRange(r, cL, 1, 2)); } catch (e) {}
+  });
+}
+
+
+function recolorCameraKitBands_(sh) {
+  if (!sh) return;
+  const width = ck_getActiveWidth_(sh);      // use your namespaced helper
+  const hpc   = '#6aa5d9';                   // or your global theme color
+
+  // Title row (safe full-width merge)
+  ck_safeMergeFullWidthRow_(sh, 1);
+  const title = sh.getRange(1, 1, 1, Math.max(1, width));
+  title.setBackground(ck_hpcShade(hpc, 80));
+  ck_styleSubheader_(title, '#FFFFFF').setFontSize(CK_TITLE_FS);
+
+  // Add Camera cell (A3) — no merge; just style
+  const addCell = sh.getRange('A3');
+  ck_stylePaddedCell_(addCell, 'Add Camera...', ck_hpcShade(hpc, 20), '#FFFFFF', true);
+
+  // Camera headers row 3 (B:…)
+  const hdr = sh.getRange(3, 2, 1, Math.max(0, width - 1));
+  hdr.setBackground(ck_hpcShade(hpc, 40));
+  ck_styleSubheader_(hdr, '#FFFFFF');
+
+  // Tint each camera pair (rows 3–14) to 20% of camera color
+  const colorRow = ck_findRowWithText_(sh, 'Camera Highlight Color') || 13;
+  for (let c = 2; c <= width; c += 2) {
+    const name = sh.getRange(colorRow, c).getDisplayValue().trim();
+    const hex  = ck_nameToHex_(name);
+    if (hex) {
+      const shade = ck_hpcShade(hex, 20);
+      sh.getRange(3, c, 12, 2).setBackground(shade)
+        .setFontColor(ck_hexIsDark_(shade) ? '#FFFFFF' : '#000000');
+    }
+  }
+
+  // Refresh bar (row 2) uses local writer which itself safe-merges row 2
+  camerakit_writeRefreshLabel_(sh, CK_REFRESH_NEUTRAL_BG, CK_REFRESH_CHOICES_CAMERA);
+}
+
+
+/* ========================= QE CURVE GRID ========================= */
+function insertQECurvePairs_(sh, startRow) {
+  const width = ck_getActiveWidth_(sh);
+  for (let i = 0; i < QE.NPAIRS; i++) {
+    const row = startRow + i;
+    ck_leftLabel_(sh.getRange(row, 1)).setValue(i === 0 ? 'λ (nm) / QE (%)' : '');
+    for (let c = 2; c <= width; c += 2) {
+      sh.getRange(row, c).setNumberFormat('0').setHorizontalAlignment('center');     // λ
+      sh.getRange(row, c + 1).setNumberFormat('0').setHorizontalAlignment('center'); // QE%
+    }
+  }
+}
+
+/* ========================= RIG ELIGIBILITY ========================= */
+function getCameraDataForCalculations_() {
+  const cameraSheet = SpreadsheetApp.getActive().getSheetByName(CK.NAME);
+  if (!cameraSheet) return [];
+  const pairs = ck_getPairsFromHeaders_(cameraSheet) || [];
+  if (!pairs.length) return [];
+
+  const pixRow = ck_findRowWithText_(cameraSheet, 'Pixel Size (um)');
+  const sizRow = ck_findRowWithText_(cameraSheet, 'Sensor size (pixels)');
+  if (!pixRow || !sizRow) return [];
+
+  const ps = cameraSheet.getRange(pixRow, 2, 1, Math.max(1, cameraSheet.getLastColumn() - 1)).getValues()[0];
+  const sw = cameraSheet.getRange(sizRow, 2, 1, Math.max(1, cameraSheet.getLastColumn() - 1)).getValues()[0];
+  const sh = cameraSheet.getRange(sizRow, 3, 1, Math.max(0, cameraSheet.getLastColumn() - 2)).getValues()[0];
+
+  return pairs.map((pair, j) => ({
+    pixelSize: parseFloat(String(ps[(j * 2)] || '').replace(',', '.')) || 0,
+    sensorWidth: parseFloat(String(sw[(j * 2)] || '').replace(',', '.')) || 0,
+    sensorHeight: parseFloat(String(sh[(j * 2)] || '').replace(',', '.')) || 0
+  }));
+}
+
+function rebuildRigEligibility_Camera_() {
+  const ss = SpreadsheetApp.getActive();
+  const cameraSheet = ss.getSheetByName(CK.NAME);
+  if (!cameraSheet) return;
+
+  const rigHdr = ck_findRowWithText_(cameraSheet, RIG.HDR_TEXT);
+  if (!rigHdr) return;
+
+  // Clear old area
+  if (cameraSheet.getLastRow() >= rigHdr + 1) {
+    cameraSheet.getRange(rigHdr + 1, 1, cameraSheet.getLastRow() - rigHdr, cameraSheet.getMaxColumns())
+      .clearContent().clearFormat();
+  }
+
+  const rigs = ck_getRigData_();
+  const cameras = getCameraDataForCalculations_();
+  if (!rigs.length || !cameras.length) return;
+
+  const activeWidth = ck_getActiveWidth_(cameraSheet);
+  const cameraPairs = ck_getPairsFromHeaders_(cameraSheet);
+
+  cameraSheet.insertRowsAfter(rigHdr, rigs.length * 3);
+  rigs.forEach((rig, i) => {
+    const row = rigHdr + (i * 3) + 1;
+
+    // color band (20% shade for readability)
+    if (rig.color) {
+      const bandHex = ck_nameToHex_(rig.color) || rig.color;
+      cameraSheet.getRange(row, 1, 3, activeWidth)
+        .setBackground(ck_hpcShade(bandHex, 20))
+        .setFontColor('#333333');
+    }
+
+    ck_leftLabel_(cameraSheet.getRange(row, 1)).setValue(rig.name);
+    ck_rightLabel_(cameraSheet.getRange(row + 1, 1)).setValue('Field of View (arcminutes)');
+    ck_rightLabel_(cameraSheet.getRange(row + 2, 1)).setValue('Image Scale (arcsec/pixel)');
+
+    cameraPairs.forEach((pair, j) => {
+      const cL = pair[0], cR = pair[1];
+      cameraSheet.getRange(row, cL, 1, 2).merge().insertCheckboxes().setHorizontalAlignment('center');
+
+      const cam = cameras[j];
+      const fmm = parseFloat(rig.focalLength || 0);
+      const imageScale = (cam.pixelSize > 0 && fmm > 0) ? 206.265 * (cam.pixelSize / fmm) : 0;
+      cameraSheet.getRange(row + 2, cL, 1, 2).merge().setValue(imageScale ? imageScale.toFixed(2) : '');
+
+      const fovWidth = imageScale > 0 ? (cam.sensorWidth * imageScale) / 60 : 0;
+      const fovHeight = imageScale > 0 ? (cam.sensorHeight * imageScale) / 60 : 0;
+      cameraSheet.getRange(row + 1, cL).setValue(fovWidth ? fovWidth.toFixed(2) : '');
+      cameraSheet.getRange(row + 1, cR).setValue(fovHeight ? fovHeight.toFixed(2) : '');
+
+      cameraSheet.getRange(row, cL, 3, 2).setBorder(null, true, null, true, false, false, '#D9D9D9', SpreadsheetApp.BorderStyle.SOLID);
+    });
+  });
+}
+
+/* ========================= NORMALIZER / LAYOUT REPAIR ========================= */
+function camerakit_fixLayout_(sh) {
+  if (!sh || sh.getName() !== CK.NAME) return;
+
+  const width = ck_getActiveWidth_(sh);
+  if (width < 2) return;
+
+  // Title full-width
+  ck_safeMergeFullWidthRow_(sh, 1);
+
+  // Pixel size row: one merged input per camera, no “Width/Height” text
+  const pxRow = ck_findRowWithText_(sh, 'Pixel Size (um)');
+  if (pxRow) {
+    for (let c = 2; c <= width; c += 2) {
+      try {
+        const r = sh.getRange(pxRow, c, 1, 2);
+        r.breakApart().clearContent();
+        ck_safeMergeRange_(r).setBackground(CK_WARN_YELLOW);
+      } catch (_) {}
+    }
+  }
+
+  // Sensor size (pixels): keep Width/Height in the two cells (no merge)
+  const szRow = ck_findRowWithText_(sh, 'Sensor size (pixels)');
+  if (szRow) {
+    for (let c = 2; c <= width; c += 2) {
+      try {
+        const rr = sh.getRange(szRow, c, 1, 2); rr.breakApart();
+        ck_center_(sh.getRange(szRow, c)).setValue('Width').setFontSize(10);
+        ck_center_(sh.getRange(szRow, c + 1)).setValue('Height').setFontSize(10);
+        sh.getRange(szRow, c, 1, 2).setBackground(CK_WARN_YELLOW);
+      } catch (_) {}
+    }
+  }
+
+  // Acknowledge Defaults — one checkbox per camera (pair merge safely)
+  const ackRow = ck_findRowWithText_(sh, 'Acknowledge Defaults');
+  if (ackRow) {
+    for (let c = 2; c <= width; c += 2) {
+      try { ck_safeMergeRange_(sh.getRange(ackRow, c, 1, 2)).insertCheckboxes().setHorizontalAlignment('center'); } catch (_) {}
+    }
+  }
+
+  // Rig rows: pair merge safely & add checkboxes
+  camerakit_fixRigRows_(sh);
+}
+
+
+function camerakit_fixRigRows_(sh) {
+  if (!sh || sh.getName() !== 'Camera Kit') return;
+
+  const rigHdr = CK.ROWS.RIG_HDR;
+  if (!rigHdr || rigHdr < 1) return;
+
+  const firstRigRow = rigHdr + 1;
+
+  // Defensive: ensure first row actually exists in sheet
+  if (firstRigRow > sh.getMaxRows()) return;
+
+  const { starts, span } = camerakit_getBlocks_(sh);
+  if (!starts.length) return;
+
+  let r = firstRigRow;
+
+  // Stop if column A is blank – prevents out-of-bounds
+  while (r <= sh.getMaxRows() &&
+        (sh.getRange(r, 1).getDisplayValue() || '').trim() !== '') {
+    starts.forEach(sc => {
+      const rng = sh.getRange(r, sc, 1, span);
+      try { rng.breakApart(); } catch (_) {}
+      try {
+        rng.merge()
+          .insertCheckboxes()
+          .setHorizontalAlignment('center');
+      } catch (_) {}
+    });
+
+    sh.getRange(r, 1, 1, sh.getLastColumn()).setFontWeight('normal');
+    r++;
+  }
+}
+
+
+function camerakit_normalizeNow_() {
+  const sh = SpreadsheetApp.getActive().getSheetByName(CK.NAME);
+  if (sh) camerakit_fixLayout_(sh);
+}
+
+/* ========================= ADD / DELETE CAMERA (with logging) ========================= */
+function SkyPix_AddCamera_(command) {
+  const ctx = 'SkyPix_AddCamera_';
+  ck_log_('Invoked', ctx);
+  try {
+    const sh = SpreadsheetApp.getActive().getSheetByName(CK.NAME);
+    if (!sh) { ck_log_('Camera Kit sheet not found', ctx); return; }
+
+    const beforeWidth = ck_getActiveWidth_(sh);
+    ck_log_('Active width BEFORE = ' + beforeWidth, ctx);
+
+    // Determine start column
+    const startCol = Math.max(2, beforeWidth + 1);
+    ck_log_('startCol computed = ' + startCol, ctx);
+
+    // Insert two columns for the camera pair
+    sh.insertColumnsAfter(startCol - 1, 2);
+    ck_log_('Inserted 2 columns after col ' + (startCol - 1), ctx);
+
+    // Match widths to column B for uniformity
+    try {
+      const w = sh.getColumnWidth(2);
+      sh.setColumnWidths(startCol, 2, w);
+      ck_log_('Set column widths for [' + startCol + ',' + (startCol + 1) + '] to ' + w, ctx);
+    } catch (eW) {
+      ck_log_('Column width copy failed: ' + eW, ctx);
+    }
+
+    // Count existing "Camera N" headers to determine next number
+    const existingVals = sh.getRange(3, 2, 1, Math.max(0, startCol - 2)).getDisplayValues()[0];
+    const countExisting = existingVals.filter(v => /^Camera\s+\d+$/i.test(String(v || ''))).length;
+    const nextN = countExisting + 1;
+    ck_log_('Existing camera count = ' + countExisting + ' → next = ' + nextN, ctx);
+
+    // Title the header merged across the pair
+    sh.getRange(3, startCol, 1, 2).merge().setValue('Camera ' + nextN)
+      .setHorizontalAlignment('center').setVerticalAlignment('middle').setFontWeight('bold');
+    ck_log_('Header set at row 3, cols ' + startCol + ':' + (startCol + 1), ctx);
+
+    // Layout fixes and coloring
+    camerakit_fixLayout_(sh);
+    recolorCameraKitBands_(sh);
+    camerakit_normalizeNow_();
+    ck_log_('Layout normalized & bands recolored', ctx);
+
+    // Rebuild Rig Eligibility (triplets)
+    camerakit_rebuildRigEligibility_(sh);
+    ck_log_('Rig Eligibility rebuilt', ctx);
+
+    SpreadsheetApp.getActive().toast('Camera added.');
+    ck_log_('Completed successfully', ctx);
+
+  } catch (err) {
+    ck_log_('ERROR: ' + err, ctx);
+    SpreadsheetApp.getActive().toast('Add Camera failed: ' + err);
+  }
+}
+
+// Delete camera by blanking the NAME in row 3 (with confirmation)
+function _ck_handleDeleteByNameBlank_(e, sh) {
+  const ctx = '_ck_handleDeleteByNameBlank_';
+  try {
+    if (e.range.getRow() !== 3) return false;
+    const c = e.range.getColumn();
+    if (c < 2) return false;
+    const blockStart = 2 + Math.floor((c - 2) / 2) * 2;
+    const newVal = String(sh.getRange(3, blockStart).getDisplayValue() || '').trim();
+    const oldVal = String(e.oldValue || '').trim();
+    if (newVal !== '') return false;
+
+    const ui = SpreadsheetApp.getUi();
+    const resp = ui.alert('Delete Camera', 'Delete this camera and remove its two columns?', ui.ButtonSet.YES_NO);
+    if (resp !== ui.Button.YES) {
+      sh.getRange(3, blockStart, 1, 2).merge().setValue(oldVal || 'Camera');
+      ck_log_('Deletion canceled by user', ctx);
+      return true;
+    }
+    sh.deleteColumns(blockStart, 2);
+    camerakit_normalizeNow_();
+    camerakit_rebuildRigEligibility_(sh);
+    SpreadsheetApp.getActive().toast('Camera deleted.');
+    ck_log_('Camera columns [' + blockStart + ',' + (blockStart + 1) + '] deleted', ctx);
+    return true;
+  } catch (err) {
+    ck_log_('ERROR: ' + err, ctx);
+    return false;
+  }
+}
+
+/* ========================= ON EDIT ========================= */
+function SkyPix_CameraKit_OnEdit_(e) {
+  const sh = e && e.source && e.source.getActiveSheet && e.source.getActiveSheet();
+  if (!sh || sh.getName() !== CK.NAME) return;
+
+  const r = e.range.getRow(), c = e.range.getColumn();
+
+  // Add Camera trigger via A3 text
+  if (r === 3 && c === 1) {
+    const v = String(e.range.getDisplayValue() || '').trim();
+    if (/^add camera/i.test(v)) { SkyPix_AddCamera_(); e.range.setValue('Add Camera.'); return; }
+  }
+
+  // Delete camera by blanking NAME in row 3
+  if (_ck_handleDeleteByNameBlank_(e, sh)) return;
+
+  // Color picker paints & clears text
+  const colorRow = ck_findRowWithText_(sh, 'Camera Highlight Color') || 13;
+  if (r === colorRow && c >= 2) {
+    const hex = ck_nameToHex_(String(e.range.getDisplayValue() || '').trim());
+    if (hex) { e.range.setBackground(hex).setValue(''); recolorCameraKitBands_(sh); }
+    return;
+  }
+
+  // Recompute on Pixel Size / Sensor size edits
+  const pxRow = ck_findRowWithText_(sh, 'Pixel Size (um)');
+  const ssRow = ck_findRowWithText_(sh, 'Sensor size (pixels)');
+  if ((r === pxRow || r === ssRow) && c >= 2) { camerakit_rebuildRigEligibility_(sh); return; }
+}
+
+/* ========================= REFRESH LABEL (local) ========================= */
+function camerakit_writeRefreshLabel_(sh, bg, choices) {
+  try {
+    ck_safeMergeFullWidthRow_(sh, 2);
+    const rng = sh.getRange(2, 1, 1, Math.max(1, ck_getActiveWidth_(sh)));
+    rng.setBackground(bg || CK_REFRESH_NEUTRAL_BG)
+       .setFontColor('#000000').setFontWeight('bold')
+       .setFontSize(CK_REFRESH_FS).setHorizontalAlignment('center')
+       .setValue('Refresh');
+  } catch (_) {}
+}
+
+
+function camera_setRefreshChoices_() {
+  const sh = SpreadsheetApp.getActive().getSheetByName(CK.NAME);
+  if (!sh) return;
+  camerakit_writeRefreshLabel_(sh, CK_REFRESH_NEUTRAL_BG, CK_REFRESH_CHOICES_CAMERA);
+}
+
+/* ========================= EXPORTED/LEGACY ENTRY POINTS ========================= */
+function camerakit_normalizeNow_() { const sh = SpreadsheetApp.getActive().getSheetByName(CK.NAME); if (sh) camerakit_fixLayout_(sh); }
+function camera_autoPatch_() { /* no-op kept for compatibility */ }
+function camera_fixLayout_() { camerakit_normalizeNow_(); }
+function camerakit_rebuildRigEligibility_(sh) { rebuildRigEligibility_Camera_(); }
+
+function SkyPix_BuildCameraKit() {
+  const ok = buildCameraKit_();
+  SpreadsheetApp.getActive().toast('Camera Kit build: ' + (ok ? 'OK' : 'FAILED'));
+  return ok;
+}

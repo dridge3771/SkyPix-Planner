@@ -1,0 +1,156 @@
+var SkyPix = this.SkyPix || (this.SkyPix = {});
+SkyPix._kitConfigs = SkyPix._kitConfigs || {};   // per-sheet config (registered by each kit)
+SkyPix._pickerRegistry = SkyPix._pickerRegistry || {};
+
+/** Register a kit’s structure so add/remove knows what to touch. */
+SkyPix.registerKit = function(sheetName, cfg){
+  // cfg: { headerRow, pickerRow, bands:[rows], blanks:[rows], specPairs:{start,end}, extraTintRows:[...] }
+  SkyPix._kitConfigs[sheetName] = JSON.parse(JSON.stringify(cfg||{}));
+};
+
+/** Expand bands/blanks to full width (after a width change). */
+SkyPix._expandBandsAndBlanks = function(sh, bands, blanks){
+  var w=Math.max(2, sh.getLastColumn());
+  (bands||[]).forEach(function(r){ try{ sh.getRange(r,1,1,w).breakApart().merge(); }catch(_){ } });
+  (blanks||[]).forEach(function(r){ try{ sh.getRange(r,1,1,w).breakApart().clearContent().setBackground(null); }catch(_){ } });
+};
+
+/** Copy merge pattern of the leftmost pair for the given row (merged for spec, unmerged for QE). */
+SkyPix._copyMergePatternFromLeft = function(sh, row, leftColNew){
+  // For simplicity: if columns 2..3 are merged on this row, merge the new pair; otherwise leave unmerged.
+  try{
+    var isMerged = sh.getRange(row,2,1,2).isPartOfMerge();
+    if (isMerged) sh.getRange(row,leftColNew,1,2).merge();
+  }catch(_){}
+  try{ sh.getRange(row,leftColNew,1,2).setHorizontalAlignment('center').setVerticalAlignment('middle'); }catch(_){}
+};
+
+/** Add a new 2-col device pair on the RIGHT; clone formats; set header; tint per rules. */
+SkyPix.addDevice = function(sheetName, headerPrefix){
+  var sh=SpreadsheetApp.getActive().getSheetByName(sheetName); if (!sh) return;
+  var cfg=SkyPix._kitConfigs[sheetName]||{};
+  var w=Math.max(2, sh.getLastColumn());
+  var left=w+1;
+
+  // Insert 2 new columns at the right edge
+  sh.insertColumnsAfter(w,2);
+
+  // Copy column widths from first pair (B,C)
+  try { sh.setColumnWidth(left, sh.getColumnWidth(2)); sh.setColumnWidth(left+1, sh.getColumnWidth(3)); }catch(_){}
+
+  // Copy formats from the first pair area (safe upper bound on rows)
+  var maxR=Math.max(sh.getLastRow(), 80);
+  try{ sh.getRange(1, w-1, maxR, 2).copyFormatToRange(sh, left, left+1, 1, maxR); }catch(_){}
+
+  // Ensure header cell (row 3) merged + text + center; tint with 10% of picker (initially HPC)
+  var hdrRow=cfg.headerRow||3, prefix=headerPrefix||'Device ';
+  // Count existing devices (non-blank headers)
+  var existing=0; try{
+    var hdr=sh.getRange(hdrRow,2,1,w-1).getDisplayValues()[0];
+    existing=hdr.filter(function(t){ return String(t||'').trim().length>0; }).length;
+  }catch(_){}
+  sh.getRange(hdrRow,left,1,2).merge().setValue(prefix+(existing+1))
+    .setFontWeight('bold').setHorizontalAlignment('center').setVerticalAlignment('middle');
+
+  // Expand bands & blanks to new width
+  SkyPix._expandBandsAndBlanks(sh, cfg.bands, cfg.blanks);
+
+  // Match row-by-row merge pattern from left pair
+  var spec = cfg.specPairs || {start:4, end:13};
+  for (var r=spec.start; r<=spec.end; r++) SkyPix._copyMergePatternFromLeft(sh, r, left);
+  // If there are additional tinted rows (e.g., QE), ensure they follow unmerged pattern by copying
+  (cfg.extraTintRows||[]).forEach(function(r){ SkyPix._copyMergePatternFromLeft(sh, r, left); });
+
+  // Attach picker + set default + tint pair
+  // Register picker row if not yet registered
+  if (!SkyPix._pickerRegistry[sheetName]) SkyPix._pickerRegistry[sheetName] = { row: cfg.pickerRow, tintRows: [] };
+  SkyPix._pickerRegistry[sheetName].tintRows = [].concat(
+    (function(){ var a=[]; for (var r=spec.start;r<=spec.end;r++) a.push(r); return a; })(),
+    (cfg.extraTintRows||[])
+  );
+
+  // Put picker at HPC@100, pair at 10% HPC, and tint the header cell too
+  var pal = SkyPix.getPalette();
+  var pickerName = pal.names[0] || 'HPC';
+  var pickerHex = SkyPix.getHPC();
+  sh.getRange(cfg.pickerRow, left).setValue(pickerName).setBackground(pickerHex);
+  var tintHex = SkyPix.shade(pickerHex, 0.10);
+  SkyPix.paintPair(sh, left, SkyPix._pickerRegistry[sheetName].tintRows, tintHex);
+// ===== REPLACE the "sh.getRange(hdrRow..." line WITH THIS BLOCK =====
+
+// Set header to Attention Orange with dark grey font
+sh.getRange(hdrRow, left, 1, 2)
+  .setBackground(WARN_ORANGE) // Use global WARN_ORANGE
+  .setFontColor('#434343') // Dark grey
+  .setFontWeight('bold');
+
+// Set default picker color to HPC (no text)
+sh.getRange(cfg.pickerRow, left, 1, 2).setValue('');
+paintColorCell_(sh.getRange(cfg.pickerRow, left), pickerHex); // pickerHex is HPC
+
+// Paint all spec and QE rows orange
+var rowsToPaint = SkyPix._pickerRegistry[sheetName].tintRows;
+(rowsToPaint || []).forEach(function(r) {
+  sh.getRange(r, left, 1, 2).setBackground(WARN_ORANGE);
+});
+
+// --- THIS IS THE FIX for Calculations ---
+// Re-run the rig triplet calculation
+try {
+  if (typeof _ck_buildRigTriplets_ === 'function') {
+    var HPC = getHPC_Global_();
+    _ck_buildRigTriplets_(sh, HPC); // This will recalculate FOV/Scale for ALL cameras
+  }
+} catch (e) {
+  Logger.log('Failed to re-run rig triplets on AddCamera: ' + e.message);
+}
+
+  return left; // left column for the new device
+};
+
+/** Remove the device pair when its header (row 3 merged cell) is cleared. */
+SkyPix.removeDeviceIfHeaderCleared = function(e){
+  var sh=e.range.getSheet(); if (!sh) return;
+  var cfg=SkyPix._kitConfigs[sh.getName()]||{};
+  var hdrRow=cfg.headerRow||3;
+
+  if (e.range.getRow() !== hdrRow) return;
+  var col=e.range.getColumn();
+  if (col < 2) return;                 // must be in a device pair
+  if (col % 2 !== 0) col--;            // normalize to left column
+  var text = String(e.range.getDisplayValue()||'').trim();
+  if (text!=='') return;               // only act on clear-to-empty
+  var ui = SpreadsheetApp.getUi();
+  var response = ui.alert('Delete Camera?', 'Camera is being removed with all its data. Correct?', ui.ButtonSet.YES_NO);
+
+  // If user clicks NO, put the old value back and stop
+  if (response !== ui.Button.YES) { 
+  e.range.setValue(e.oldValue); 
+  return; 
+}
+
+// Guard rail: Check if this is the last camera
+var w = Math.max(2, sh.getLastColumn());
+if (w <= 3) { // Only columns A, B, C exist
+  ui.alert('Cannot delete the last camera. Please add a new camera before deleting this one.');
+  e.range.setValue(e.oldValue); // Put name back
+  return;
+}
+
+  // Delete the two columns for this device
+  sh.deleteColumns(col, 2);
+
+  // Re-expand bands/blank rows across new width
+  SkyPix._expandBandsAndBlanks(sh, cfg.bands, cfg.blanks);
+
+  
+};
+
+// --- onEdit master (color + device deletion) if not already present ---
+if (typeof onEdit !== 'function') {
+  function onEdit(e){ SkyPix.OnEditRouter(e); SkyPix.removeDeviceIfHeaderCleared(e); }
+} else {
+  // If you already had onEdit, call our routers inside it manually.
+  // Example:
+  // function onEdit(e){ SkyPix.OnEditRouter(e); SkyPix.removeDeviceIfHeaderCleared(e); ...your logic... }
+}
