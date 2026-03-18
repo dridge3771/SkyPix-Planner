@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <style>
+      body { font-family: Arial, sans-serif; padding: 12px; }
+      h1 { margin: 0 0 8px; font-size: 18px; }
+      label { display:block; margin-top:10px; font-weight:bold; }
+      input { width:100%; box-sizing:border-box; padding:8px; margin-top:4px; }
+      .row { margin-top:12px; display:flex; gap:8px; flex-wrap:wrap; }
+      .banner { margin-top:10px; padding:8px; background:#f2f2f2; }
+    </style>
+  </head>
+  <body>
+    <h1>SkyPix Planner — API Keys</h1>
+
+    <label for="CSE_KEY">Google Custom Search API Key</label>
+    <input id="CSE_KEY" type="text" placeholder="AIza...">
+
+    <label for="CSE_CX">Programmable Search Engine ID (cx)</label>
+    <input id="CSE_CX" type="text" placeholder="xxxxxxx:yyyyyyyy">
+
+    <label for="AIRNOW_KEY">AirNow API Key</label>
+    <input id="AIRNOW_KEY" type="text">
+
+    <label for="ASTROBIN_KEY">AstroBin API Key (optional)</label>
+    <input id="ASTROBIN_KEY" type="text">
+
+    <label for="LPOLLUTION_KEY">Light Pollution API Key (optional)</label>
+    <input id="LPOLLUTION_KEY" type="text">
+
+    <label for="EQUIPMENT_API_KEY">Equipment API Key (optional)</label>
+    <input id="EQUIPMENT_API_KEY" type="text">
+
+    <div class="row">
+      <button id="save">Save Keys</button>
+      <button id="reload" type="button">Load Current</button>
+      <button id="test" type="button">Test</button>
+      <button id="clear" type="button">Clear All</button>
+    </div>
+
+    <div id="msg" class="banner">Loading current keys…</div>
+
+    <script>
+      (function(){
+        const ids = ['CSE_KEY','CSE_CX','AIRNOW_KEY','ASTROBIN_KEY','LPOLLUTION_KEY','EQUIPMENT_API_KEY'];
+        const $ = id => document.getElementById(id);
+        const setMsg = t => $('msg').textContent = t;
+
+        function load(){
+          setMsg('Loading current keys…');
+          google.script.run
+            .withSuccessHandler(o => {
+              ids.forEach(id => $(id).value = (o && o[id]) || '');
+              setMsg('Keys loaded.');
+            })
+            .withFailureHandler(err => setMsg('Error loading keys: ' + (err && err.message || err)))
+            .loadApiKeysForDialog();
+        }
+
+        function save(){
+          const payload = {};
+          ids.forEach(id => payload[id] = $(id).value.trim());
+          setMsg('Saving…');
+          google.script.run
+            .withSuccessHandler(() => setMsg('Saved.'))
+            .withFailureHandler(err => setMsg('Save failed: ' + (err && err.message || err)))
+            .saveApiKeysFromDialog(payload);
+        }
+
+        function clearAll(){
+          if(!confirm('Delete all keys?')) return;
+          const empty = {}; ids.forEach(id => empty[id] = '');
+          setMsg('Clearing…');
+          google.script.run
+            .withSuccessHandler(() => { ids.forEach(id => $(id).value = ''); setMsg('All keys cleared.'); })
+            .withFailureHandler(err => setMsg('Clear failed: ' + (err && err.message || err)))
+            .saveApiKeysFromDialog(empty);
+        }
+
+        function test(){
+          setMsg('Testing…');
+          google.script.run
+            .withSuccessHandler(txt => setMsg('Dialog ↔ server OK: ' + txt))
+            .withFailureHandler(err => setMsg('Test failed: ' + (err && err.message || err)))
+            .testApiConnection();
+        }
+
+        $('save').addEventListener('click', save);
+        $('reload').addEventListener('click', load);
+        $('clear').addEventListener('click', clearAll);
+        $('test').addEventListener('click', test);
+        load();
+      })();
+    </script>
+  </body>
+</html>

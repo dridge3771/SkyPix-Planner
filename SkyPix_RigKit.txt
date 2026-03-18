@@ -1,0 +1,4 @@
+1. Row 11 label and mapping: change to 'UTC Offset (hrs)' and use Setup C6 for value.
+2. Row 12 label and mapping: change to 'Elevation (m)' and use Setup C7 for value.
+3. All logic and mapping for 4D Finder, Add Rig, etc. reflect these row swaps.
+4. Row 7 (aperture area): ensure numeric, comma formatting, 0 decimals, and fully protected.

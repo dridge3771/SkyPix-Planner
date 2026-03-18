@@ -1,0 +1,611 @@
+/************************************************************
+ * SkyPix Planner — Definitive Backend Code (Alpha 53)
+ ************************************************************/
+function clearTestApiKeys() {
+  const properties = PropertiesService.getScriptProperties();
+  properties.deleteProperty('CSE_KEY');
+  properties.deleteProperty('CSE_CX'); 
+  properties.deleteProperty('AIRNOW_KEY');
+  Logger.log('Test keys cleared - users will need to enter their own');
+}
+function testSaveKeys() {
+  try {
+    const testKeys = {
+      'CSE_KEY': 'test123',
+      'CSE_CX': 'test456'
+    };
+    setApiKeys_(testKeys);
+    Logger.log('Save test completed');
+  } catch (e) {
+    Logger.log('Save test failed: ' + e.message);
+  }
+}
+// ======================= DEBUGGING UTILITY =======================
+const IS_DEBUG_MODE = true;
+
+function logDebug_(message) {
+  if (IS_DEBUG_MODE) {
+    Logger.log(message);
+  }
+}
+function debugApiKeys() {
+  const props = PropertiesService.getScriptProperties().getProperties();
+  Logger.log('All stored properties:');
+  for (const key in props) {
+    Logger.log(key + ': ' + (props[key] ? props[key].substring(0, 10) + '...' : 'empty'));
+  }
+}
+/* ======================= PUBLIC ENTRY ======================= */
+/* ===== MENU-OPEN — START (safe) ===== */
+function onOpen() {
+  const ui = SpreadsheetApp.getUi();
+  const menu = ui.createMenu('SkyPix Planner');
+
+  menu.addItem('Build All', 'SkyPix_BuildAll');
+
+  const buildSubMenu = ui.createMenu('Build Individual Sheets')
+    .addItem('Build Object Entry', 'SkyPix_BuildObjectEntry')
+    .addItem('Build Setup', 'SkyPix_BuildSetup')
+    .addItem('Build Rig Kit', 'SkyPix_BuildRigKit')
+    .addItem('Build Camera Kit', 'SkyPix_BuildCameraKit')
+    .addItem('Build Filter Kit', 'SkyPix_BuildFilterKit')
+    .addItem('Build Object Database', 'SkyPix_BuildObjectDatabase');
+  menu.addSubMenu(buildSubMenu);
+
+  const toolsSubMenu = ui.createMenu('Tools')
+    .addItem('Find Location by Address...', 'showLocationFinder')
+    .addItem('Add 25 Object Rows', 'SkyPix_AddObjects_')
+    .addItem('Test Object Lookup (active row)', 'SkyPix_Debug_TestObjectFetch_');
+  menu.addSubMenu(toolsSubMenu);
+
+  const adminSubMenu = ui.createMenu('Admin')
+    .addItem('Set API Keys...', 'showApiKeysDialog_')
+    .addItem('Authorize Script (First-Time Use)', 'SkyPix_Authorize_')
+    .addSeparator()
+    .addItem('Set API Keys (Manual)', 'setApiKeysManually')
+    .addItem('Enable onEdit Trigger', 'SkyPix_EnableOnEdit_')
+    .addItem('!!! Delete All Sheets !!!', 'deleteAllSkyPixSheets_')
+    .addItem('Resolve Pasted List…', 'showResolveProgress_')
+    .addItem('Fix Zenith/Landscape layout', 'run_fix_zenith_landscape_')
+    .addItem('Restore Rig color picker', 'rigkit_restoreColorPicker_')
+    .addItem('Restore Location Finders', 'rigkit_restoreAllLocationFinders_');
+  menu.addSubMenu(adminSubMenu);
+
+  menu.addToUi();
+
+  try { installOnEditTrigger_(); }
+  catch (err) {
+    SpreadsheetApp.getActive().toast('Note: onEdit trigger not installed. Use Admin ▸ Enable onEdit Trigger.');
+  }
+}
+
+function run_fix_zenith_landscape_() {
+  const sh = SpreadsheetApp.getActive().getSheetByName('Rig kit');
+  if (sh) rigkit_applyZenithLandscapeLayout_(sh);
+}
+
+/* ===== MENU-OPEN — END ===== */
+
+// --- Bootstrap guard so early code can safely read FK.NAME even before FK is defined.
+var FK = (typeof FK !== 'undefined') ? FK : { NAME: 'Filter Kit' };
+
+function deleteAllSkyPixSheets_() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert('Are you sure you want to permanently delete all SkyPix Planner sheets?', ui.ButtonSet.YES_NO);
+  if (response !== ui.Button.YES) return;
+  const ss = SpreadsheetApp.getActive();
+  const sheetNamesToDelete = ['_config', 'Object Entry', 'Setup', 'Rig kit', CK.NAME, FK.NAME, 'Object Database', 'Setup Parameters', 'Sensor Kit'];
+  sheetNamesToDelete.forEach(name => {
+    const sheet = ss.getSheetByName(name);
+    if (sheet) ss.deleteSheet(sheet);
+  });
+  ss.toast('All SkyPix Planner sheets have been deleted.');
+}
+
+function createOnEditTrigger_() {
+  const ss = SpreadsheetApp.getActive();
+  ScriptApp.getProjectTriggers().forEach(trigger => {
+    if (trigger.getHandlerFunction() === 'onEditTrigger') {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+  ScriptApp.newTrigger('onEditTrigger').forSpreadsheet(ss).onEdit().create();
+}
+
+function SkyPix_BuildAll() {
+  const ss = SpreadsheetApp.getActive();
+  _createConfigSheet_(ss);
+  buildObjectEntrySheet_(ss);
+  buildSetup_(ss);
+  buildRigKit_(ss);
+  buildCameraKit_(ss);
+  buildFilterKit_(ss);
+  buildObjectDatabase_(ss);
+}
+
+function SkyPix_Authorize_() {
+  try {
+    UrlFetchApp.fetch('https://www.google.com');
+    PropertiesService.getScriptProperties().getKeys();
+    SpreadsheetApp.getActive().toast('SkyPix Planner has been successfully authorized.');
+  } catch (e) {
+    SpreadsheetApp.getActive().toast('Authorization process initiated. Please review and allow permissions.');
+  }
+}
+
+/* Remove duplicate SkyPix_EnableOnEdit_ that caused redefinition errors. Keep the later, robust implementation. */
+
+/* ======================= ON EDIT DISPATCHER ======================= */
+function SkyPix_DispatchOnChange_(e) {
+  const sh = e.range.getSheet();
+  const sheetName = sh.getName();
+  const a1 = e.range.getA1Notation();
+  const val = e.value;
+  const oldVal = e.oldValue;
+  const editRow = e.range.getRow();
+  const editCol = e.range.getColumn();
+  const label = sh.getRange(editRow, 1).getDisplayValue();
+
+  // --- Universal Color Cell Handling ---
+  if (
+    (sheetName === 'Setup' && (a1 === 'C12' || a1 === 'C13')) ||
+    (sheetName === 'Rig kit' && label.includes('Rig highlight color')) ||
+    (sheetName === CK?.NAME && editRow === CK?.ROWS?.COLOR && editCol > 1)
+  ) {
+    paintColorCell_(e.range, val);
+    if (sheetName === 'Setup' && a1 === 'C12') {
+      recolorAllSheets_();
+    } else {
+      if (typeof RK_handleCellEdit_ === "function") RK_handleCellEdit_(e);
+    }
+    return;
+  }
+
+  // --- Orange/Yellow warning clearing ---
+  const bg = e.range.getBackground().toLowerCase();
+  if (bg === WARN_ORANGE?.toLowerCase() || bg === WARN_YELLOW?.toLowerCase()) {
+    if (isValueValid_(val, e.range)) {
+      e.range.setBackground(null);
+    }
+  }
+  Logger.log('=== ABOUT TO ENTER SWITCH - sheetName: "' + sheetName + '" ===');
+
+  // --- Setup Sheet Logic ---
+  if (sheetName === 'Setup') {
+    if (a1 === 'C4' && val === 'Retrieve 4D Location') {
+      showLocationFinder('Setup');
+      e.range.setValue('');
+      return;
+    }
+    
+    // Handle Refresh Rig Kit action
+    if (editRow === 2 && val === 'Refresh Rig Kit') {
+      propagateSetupToRigs_();
+      styleRefreshBarNeutral_(sh);
+      return;
+    }
+    
+    // Capture OLD value and paint bar yellow for location data edits (C4-C9)
+    if (editRow >= 4 && editRow <= 9 && editCol === 3) {
+      // Skip color pickers (rows 12-13 in your new layout don't need this, but kept for safety)
+      if (editRow === 12 || editRow === 13) return;
+      
+      // Store OLD value before it was changed
+      const oldSetupVal = e.oldValue || '';
+      const key = `SETUP_OLD_R${editRow}`;
+      PropertiesService.getScriptProperties().setProperty(key, String(oldSetupVal));
+      
+      // Only paint yellow if value actually changed
+      if (oldSetupVal !== val) {
+        setRefreshBarYellow_(sh);
+      }
+      return;
+    }
+    
+    // Acknowledge Defaults checkbox (C21)
+    if (a1 === 'C21' && val === 'TRUE') {
+      sh.getRange('C18:C20').setBackground(null);
+    }
+    
+    return;
+  }
+
+  // --- Sheet-Case Switch ---
+  switch (sheetName) {
+    // --- Object Entry Sheet ---
+    case 'Object Entry':
+      if (editCol === 1 && editRow > 4 && val) {
+        const rng = e.range;
+        if (rng.getNumRows() > 1 || rng.getNumColumns() > 1) {
+          showResolveProgress_();
+          return;
+        }
+        const out = fetchSimbadData(rng);
+        if (out === 'Success') setRefreshBarYellow_(sh);
+        return;
+      }
+      if (editRow === 2 && val === 'Refresh Database') {
+        processObjectEntries_();
+        styleRefreshBarNeutral_(sh);
+        writeRefreshLabel_(sh, REFRESH_NEUTRAL_BG, REFRESH_CHOICES_DB_ONLY);
+        return;
+      }
+      if (editRow === 2 && val === 'Update Database') {
+        processObjectEntries_();
+        rigkit_resetRefreshBar_(sh);
+        return;
+      }
+      break;
+
+    // --- Rig Kit Sheet ---
+    case 'Rig kit':
+      // Row 15: "Acknowledge Defaults" checkbox logic
+      if (editRow === 15) {
+        if (val === "TRUE") {
+          RK_acknowledgeDefaults_(sh, editCol);
+        }
+        return;
+      }
+      // Row 16: "Rig Highlight Color" picker logic
+      if (editRow === 16 && val) {
+        if (typeof RK_handleColorPicker_ === "function") RK_handleColorPicker_(sh, editCol, val);
+        return;
+      }
+
+      // Handle Add Rig / Add Duplicate / Cancel in the dropdown at A3
+      if (a1 === 'A3') {
+        if (val === 'Add Rig') {
+          SkyPix_AddRig_();
+          return;
+        }
+        if (val === 'Add Duplicate') {
+          SkyPix_AddRig_(true);
+          return;
+        }
+        if (val === 'Cancel') {
+          sh.getRange('A3').setValue('Add Rig...');
+          return;
+        }
+        sh.getRange('A3').setValue('');
+        SpreadsheetApp.flush();
+        sh.getRange('A3').setValue('Add Rig...');
+      }
+
+      // Refresh actions and planner glue
+      if (editRow === 2) {
+        if (val === 'Refresh Kits') {
+          if (typeof refreshKits_ === "function") refreshKits_();
+          if (typeof rigkit_resetRefreshBar_ === "function") rigkit_resetRefreshBar_(sh);
+          return;
+        }
+        if (val === 'Refresh Air Quality Index') {
+          if (typeof updateAllRigAirQuality === "function") updateAllRigAirQuality();
+          if (typeof rigkit_resetRefreshBar_ === "function") rigkit_resetRefreshBar_(sh);
+          return;
+        }
+        if (val === 'Refresh Bortle Class') {
+          if (typeof updateAllRigBortleClass === "function") updateAllRigBortleClass();
+          if (typeof rigkit_resetRefreshBar_ === "function") rigkit_resetRefreshBar_(sh);
+          return;
+        }
+        if (val === 'Refresh Planner') {
+          // Optionally: planner update glue
+          if (typeof rigkit_resetRefreshBar_ === "function") rigkit_resetRefreshBar_(sh);
+          return;
+        }
+      }
+
+      if (editRow === 9 && val === 'Retrieve 4D Location') {
+        showLocationFinder('Rig kit', e.range.getA1Notation());
+        e.range.setValue('');
+        return;
+      }
+      // Rig deletion logic
+      if (editRow === 3 && (!val || val.trim() === '')) {
+        const ui = SpreadsheetApp.getUi();
+        const response = ui.alert(`Are you sure you want to delete rig "${oldVal}"?`, ui.ButtonSet.YES_NO);
+        if (response == ui.Button.YES) {
+          sh.deleteColumns(editCol, 2);
+        } else {
+          e.range.setValue(oldVal);
+        }
+        return;
+      }
+      // Rig name change logic
+      if (editRow === 3 && val !== oldVal) {
+        if (typeof rigkit_forceColorPicker_ === "function") rigkit_forceColorPicker_();
+        if (typeof rigkit_resetRefreshBar_ === "function") rigkit_resetRefreshBar_(sh);
+        return;
+      }
+      if (editRow === 23) {
+        if (typeof rebuildRigEligibility_Camera_ === "function") rebuildRigEligibility_Camera_();
+        if (typeof rebuildRigEligibility_Filter_ === "function") rebuildRigEligibility_Filter_();
+        setRefreshBarYellow_(sh);
+        return;
+      }
+
+      // Any other edit on Rig kit should set bar yellow
+      setRefreshBarYellow_(sh);
+      break;
+
+    // --- Camera Kit Sheet ---
+    case CK?.NAME:
+      if (a1 === 'A3' && val === 'Add Camera') {
+        if (typeof SkyPix_AddCamera_ === "function") SkyPix_AddCamera_();
+        e.range.setValue('Add Camera...');
+        return;
+      } else {
+        setRefreshBarYellow_(sh);
+        return;
+      }
+
+    // --- Filter Kit Sheet ---
+    case FK?.NAME:
+      Logger.log('=== FILTER KIT CASE ENTERED - sheetName: "' + sheetName + '", FK?.NAME: "' + FK?.NAME + '" ===');
+      // Color Picker Handler (row 14)
+      if (editRow === 14 && editCol > 1 && val) {
+        Logger.log('=== COLOR PICKER HANDLER TRIGGERED ===');
+        paintColorCell_(e.range, val);                // 100% color on the PICKER CELL ONLY
+
+        const block = (typeof getFilterBlockForColumn_ === "function")
+          ? getFilterBlockForColumn_(sh, editCol)
+          : null;
+
+        if (block) {
+          // Base color from the picker cell we just painted
+          const baseColor = e.range.getBackground();
+          const numBands  = block.width / 2;         // 1..4 bands → 2,4,6,8 columns
+          const shadePct  = [20, 15, 10, 5];         // use first N entries
+
+          // Keep headers/subheaders untouched.
+          // Apply shading to rows 4–15 (skip row 14) and 18–22 for THIS filter block.
+          // J/K → 20%, L/M → 15%, next pairs → 10%, 5% (up to 4 bands).
+          // Rows 25+ are intentionally not touched.
+
+          // Row 4 and Row 15 are the only full-width rows we touch (per your existing design).
+          sh.getRange(4,  block.startCol, 1, block.width).setBackground(hpcShade(baseColor, 20));
+          sh.getRange(15, block.startCol, 1, block.width).setBackground(hpcShade(baseColor, 20));
+
+          for (let b = 0; b < numBands; b++) {
+            const bandCol = block.startCol + (b * 2);
+            const pct     = shadePct[b] || 5;
+            const shade   = hpcShade(baseColor, pct);
+
+            // Rows 5–13 (filter data rows), skip row 14 (the picker)
+            sh.getRange(5,  bandCol, 9, 2).setBackground(shade);
+
+            // Rows 18–22 (transmission curve)
+            sh.getRange(18, bandCol, 5, 2).setBackground(shade);
+          }
+        }
+        return;
+      }
+
+      if (editRow === 2 && val === 'Refresh Rig Planners') {
+        Logger.log('=== REFRESH HANDLER ===');
+        if (typeof handlePlannerUpdate_ === "function") handlePlannerUpdate_();
+        if (typeof styleRefreshBarNeutral_ === "function") styleRefreshBarNeutral_(sh);
+        return;
+      } else if (a1 === 'A3' && val && val.startsWith('Add')) {
+        Logger.log('=== ADD FILTER HANDLER ===');
+        if (typeof SkyPix_AddFilter_ === "function") SkyPix_AddFilter_(val);
+        e.range.setValue('Add Filter...');
+        return;
+      } else if (editRow === 3 && (!val || val.trim() === '')) {
+        Logger.log('=== DELETE FILTER HANDLER ===');
+        const ui = SpreadsheetApp.getUi();
+        const response = ui.alert(`Are you sure you want to delete filter "${oldVal}"?`, ui.ButtonSet.YES_NO);
+        if (response == ui.Button.YES) {
+          const mergedRange = e.range.getMergedRanges()[0];
+          sh.deleteColumns(mergedRange.getColumn(), mergedRange.getWidth());
+          if (typeof rebuildFilterKitLayout_ === "function") rebuildFilterKitLayout_();
+        } else {
+          Logger.log('=== ENTERED ELSE BLOCK ===');
+          e.range.setValue(oldVal);
+        }
+        return;
+      } else {
+        Logger.log('=== ENTERED ELSE BLOCK - editRow: ' + editRow + ', editCol: ' + editCol);
+        if (label === FK?.BAND_ID_LABEL) {
+          const block = typeof getFilterBlockForColumn_ === "function" ? getFilterBlockForColumn_(sh, editCol) : null;
+          if (block) {
+            if (typeof populateDefaultBandData_ === "function") populateDefaultBandData_(sh, editCol, val);
+            if (typeof populateTransmissionCurve_ === "function") populateTransmissionCurve_(sh, editCol, val);
+            
+            // Paint ONLY this band pair orange (rows 6-13, this band's 2 columns)
+            sh.getRange(FK.ROWS.BANDWIDTH, editCol, (FK.ROWS.SUBSTRATE - FK.ROWS.BANDWIDTH + 1), 2).setBackground(WARN_ORANGE);
+            
+            // Also paint this band's transmission curve orange (rows 18-22)
+            sh.getRange(18, editCol, 5, 2).setBackground(WARN_ORANGE);
+            
+            // Uncheck acknowledge defaults for this filter
+            sh.getRange(FK.ROWS.ACK, block.startCol).setValue(false);
+          }
+        }
+
+        if (editRow === FK?.ROWS?.ACK && val === 'TRUE') {
+          const block = typeof getFilterBlockForColumn_ === "function" ? getFilterBlockForColumn_(sh, editCol) : null;
+          if (block) {
+            // Get the filter's chosen color from row 14 BACKGROUND
+            const colorRange = sh.getRange(14, block.startCol, 1, block.width);
+            const baseColor = colorRange.getBackground(); // Read background color directly
+            
+            const numBands = block.width / 2;
+            const shadePercentages = [20, 15, 10, 5];
+            
+            const shade20 = hpcShade(baseColor, 20);
+            
+            // Row 3: SKIP - keep HPC header color
+            
+            // Row 4: Filter Model at 20%
+            sh.getRange(4, block.startCol, 1, block.width).setBackground(shade20);
+            
+            // Row 15: Acknowledge Defaults at 20%
+            sh.getRange(15, block.startCol, 1, block.width).setBackground(shade20);
+            
+            // Rows 5-13 and 18-22: Paint with graduated shades
+            for (let b = 0; b < numBands; b++) {
+              const bandCol = block.startCol + (b * 2);
+              const shadedColor = hpcShade(baseColor, shadePercentages[b] || 5);
+              
+              sh.getRange(5, bandCol, 9, 2).setBackground(shadedColor);
+              sh.getRange(18, bandCol, 5, 2).setBackground(shadedColor);
+            }
+            
+            setRefreshBarYellow_(sh);
+          }
+        }
+        setRefreshBarYellow_(sh);
+        return;
+      }
+
+    // --- Object Database Sheet ---
+    case 'Object Database':
+      if (editCol === 1 && editRow > 4 && val && val.startsWith('Smart Search')) {
+        SpreadsheetApp.getActive().toast(`Running "${val}" for object: ${oldVal || ''}`);
+        e.range.setValue(oldVal);
+        return;
+      }
+      break;
+  }
+}
+
+function showResolveProgress_(){
+  const html = HtmlService.createHtmlOutput(
+    `<!DOCTYPE html><html><head><meta name="google-apps-script-cando" content="true">
+     <style>body{font-family:Arial;text-align:center;padding:14px}#s{font-weight:bold}</style></head>
+     <body><div>Resolving objects…</div><div id="s">Starting…</div>
+     <script>
+       function step(){
+         google.script.run.withSuccessHandler(function(res){
+           document.getElementById('s').textContent = res.message || '';
+           if (res.done){ setTimeout(()=>google.script.host.close(), 900); }
+           else { setTimeout(step, 250); }
+         }).doResolveBatch_();
+       }
+       window.addEventListener('load', step);
+     </script></body></html>`
+  ).setWidth(300).setHeight(140);
+  SpreadsheetApp.getUi().showModalDialog(html,'Processing Objects…');
+}
+
+function doResolveBatch_(){
+  const sh = SpreadsheetApp.getActive().getSheetByName('Object Entry');
+  if (!sh) return {message:'Sheet not found', done:true};
+
+  const { batchSize, auto } = _getBatchPrefs_();
+  const props = PropertiesService.getScriptProperties();
+  const lastRow = sh.getLastRow();
+
+  // find where to start
+  let row = Number(props.getProperty('SPX_RESOLVE_NEXT_ROW') || 5);
+  let processed = 0;
+
+  for (; row <= lastRow && processed < batchSize; row++){
+    const id = String(sh.getRange(row,1).getDisplayValue() || '').trim();
+    if (!id) continue;
+    const st = String(sh.getRange(row,7).getDisplayValue() || '');
+    if (st === 'Success' || st === 'Duplicate') continue;
+    fetchSimbadData(sh.getRange(row,1));
+    processed++;
+    Utilities.sleep(120);
+  }
+
+  if (row > lastRow){
+    props.deleteProperty('SPX_RESOLVE_NEXT_ROW');
+    return { message: `Resolved ${processed} object(s). Done.`, done: true };
+  } else {
+    props.setProperty('SPX_RESOLVE_NEXT_ROW', String(row));
+    if (auto) return { message: `Resolved ${processed} object(s). Continuing…`, done: false };
+    return { message: `Resolved ${processed} object(s).`, done: true };
+  }
+}
+
+/* ======================= Bulk Object Entry Resolving ======================= */
+function SkyPix_BulkResolveRange_(rng){
+  const sh = rng.getSheet();
+  if (sh.getName() !== 'Object Entry') return;
+
+  const start = Math.max(5, rng.getRow());                 // only rows ≥ 5
+  const end   = start + rng.getNumRows() - 1;
+
+  let resolved = 0;
+  for (let r = start; r <= end; r++){
+    const id = sh.getRange(r, 1).getDisplayValue().trim(); // A-column value
+    if (!id) continue;
+
+    const out = fetchSimbadData(sh.getRange(r, 1));        // resolve this row
+    if (out === 'Success' || out === 'Duplicate') resolved++;
+
+    Utilities.sleep(120);                                   // be gentle to APIs
+  }
+
+  if (resolved > 0) {
+    // Turn the bar yellow and show the two choices
+    setRefreshBarYellow_(sh);
+  }
+
+  SpreadsheetApp.getActive().toast(`Resolved ${resolved} object(s).`);
+}
+
+function SkyPix_BulkResolveSelected_(){
+  const sh = SpreadsheetApp.getActiveSheet();
+  if (!sh || sh.getName() !== 'Object Entry'){
+    SpreadsheetApp.getUi().alert('Select a range on the "Object Entry" sheet.');
+    return;
+  }
+  const rng = sh.getActiveRange();
+  if (!rng) return;
+
+  const firstRow = Math.max(5, rng.getRow());
+  const lastRow  = rng.getLastRow();
+  SkyPix_BulkResolveRange_(sh.getRange(firstRow, 1, lastRow - firstRow + 1, 1));
+}
+
+/* ======================= CANON CONSTANTS & HELPERS ======================= */
+const TITLE_FS = 16, HEADER_FS = 12, LABEL_FS = 10, REFRESH_FS = 12;
+const ROW_H_ALL = 36, ROW_H_HORIZON = 21, ROW_H_CURVE = 21;
+const REFRESH_CHOICES_RIG = ['Refresh Kits', 'Refresh Air Quality Index', 'Refresh Bortle Class', 'Refresh Database', 'Refresh Planner', 'Cancel'];
+const REFRESH_CHOICES_CAMERA = ['Refresh planner', 'Retrieve specifications', 'Cancel'];
+const REFRESH_CHOICES_FILTER = ['Refresh planner', 'Retrieve specifications', 'Cancel'];
+const REFRESH_CHOICES_DEFAULT = ['Refresh', 'Refresh Kits', 'Refresh Database'];
+const REFRESH_CHOICES_SETUP = ['Refresh Rig Kit', 'Cancel'];
+const REFRESH_CHOICES_DB_ONLY = ['Refresh Database', 'Update Database', 'Cancel'];
+const REFRESH_LABEL_OPTION = 'Refresh';  // non-action label shown in the bar
+const REFRESH_LABEL          = 'Refresh';             // default label
+const CANCEL_LABEL           = 'Cancel';              // secondary action
+const REFRESH_DB_LABEL       = 'Refresh Database';    // Object Entry special case
+
+// Default choices for most sheets
+const REFRESH_CHOICES        = [REFRESH_LABEL, CANCEL_LABEL];
+
+// Optional: small visual nudge so the caret doesn't crowd the text
+const REFRESH_LEFT_PAD_PX    = 8;
+function padRefreshLabel_(s, px = REFRESH_LEFT_PAD_PX) {
+  // ~6 px per NBSP at 10pt Arial; tweak if you change font/size
+  const n = Math.max(0, Math.round(px / 6));
+  return '
+
+  // ===== PRECISION SETTINGS ===== //
+const LATLON_DECIMALS = 4;   // 4 dp for lat/lon; elevation is integer elsewhere
+const DEFAULT_HPC = '#4472c4'; 
+const WARN_YELLOW = '#ffff00', WARN_ORANGE = '#ffa500';
+const REFRESH_NEUTRAL_BG = '#e8e8e8';
+const DARK_GREY_FONT = '#434343';
+
+const COLOR_PICKER = [['Blue', '#1E90FF'], ['Deep Blue', '#0047AB'], ['Steel Blue', '#4682B4'], ['Cyan', '#00BCD4'], ['Light Blue', '#87CEFA'], ['Cornflower', '#6495ED'], ['Green', '#2E8B57'], ['[...]';
+const RDEF_LABELS = ['Rig model', 'Aperture (mm)', 'Central obstruction (mm)', 'Effective aperture area (mm²)', 'Effective focal length (mm)', 'Latitude (°) [N + / S -]', 'Longitude (°) [E + /[...']
+const DFS_LABELS = ['Darkness convention', 'Times reported based on', 'Visibility reported as', 'Offset of transit/rising (minutes)', 'Display objects observable for the next... (months)', 'Displ[...']
+const IMC_LABELS = [
+  'Maximum integration time per object (hours)',
+  'Maximum subframe exposure (seconds)',
+  'Minimum object elevation (degrees)',
+  'Expected ambient temp (°C)',
+  'Sky Brightness',                        // was “Bortle class”
+  'Air quality index',                     // stays, moved up with Sky Brightness
+  'Minimum contiguous imaging time (min)', // new; replaces K (λ)
+  'Lunar avoidance angle (degrees)'
+];
+
+function getLandHdrRow_(sh) {
+  // Find the 
