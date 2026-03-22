@@ -7518,7 +7518,113 @@ GitHub is the authoritative home for the LDD from 2026-03-18 forward.
 ---
 <!-- END PART LV -->
 
-LDD VERSION: 2026-03-18-A  |  PARTS: XL–LV  |  VERIFY: BROADBAND-PATH-LOCKED
+---
+Section 259 — SURFACE Geometry Enrichment Pass (LOCKED 2026-03-19)
+
+## Background
+
+A geometry audit conducted 2026-03-19 revealed 53,071 SURFACE objects with
+major_axis_arcsec IS NULL. Breakdown by class:
+
+| Class | No-size count | Notes |
+|-------|--------------|-------|
+| DN    | 18,502 | Dark nebulae — geometry should exist |
+| EN    | 10,051 | Emission nebulae — packing gate failure |
+| GxyP  |  8,548 | Galaxy pairs — complex but some geometry expected |
+| OC    | 11,860 | EXEMPT — bulk promotion doctrine, no geometry gate |
+| WR    |  1,586 | Wolf-Rayet shells — size should exist |
+| RN    |  1,141 | Reflection nebulae — same issue as EN |
+| PN    |    542 | Planetary nebulae — Gate A should have caught these |
+| G     |    507 | Galaxies |
+| Gxy   |    124 | Galaxies |
+| SNR   |    109 | ANOMALY — pilot class, geometry was mandatory |
+| GxyG  |    100 | Galaxy groups |
+| GC    |      1 | Globular cluster |
+
+OC is exempt by doctrine (Section 56.3 — bulk promotion, no geometry gate).
+All other classes represent enrichment opportunities or anomalies requiring
+investigation.
+
+## Target Population
+
+```sql
+SELECT primary_id, skypix_object_class, simbad_otype, ra_deg, dec_deg
+FROM public.objects
+WHERE layer = 'SURFACE'
+AND major_axis_arcsec IS NULL
+AND skypix_object_class NOT IN ('OC')
+ORDER BY skypix_object_class;
+```
+
+Approximate count: 41,211 objects.
+
+## Geometry Sources (Priority Order)
+
+| Source | Method | Best for |
+|--------|--------|----------|
+| SIMBAD TAP | angular size query by identifier | All classes — broadest coverage |
+| NED | name resolver + size | Galaxies, galaxy groups |
+| HyperLeda | morphology + size | Galaxies |
+| Green SNR catalog (VII/272) | direct lookup | SNR |
+| V/84 Strasbourg-ESO PN | direct lookup | PN |
+| Dobashi (2011) | direct lookup | DN |
+
+## Enrichment Pass Architecture
+
+1. Query SIMBAD TAP by batch — group by simbad_otype for efficient querying
+2. For each object returning geometry: write major_axis_arcsec, minor_axis_arcsec
+   (if available), position_angle_deg (if available)
+3. Set geometry_mode: GEO3 if all three axes present, GEO2 if major only
+4. For objects returning no SIMBAD geometry: escalate to class-specific source
+5. Log all failures — objects with no geometry from any source remain SURFACE
+   but are flagged for future manual resolution
+
+## Payload Re-pack Requirement
+
+A geometry update on a SURFACE object triggers a payload re-pack.
+Geometry columns feed: FOV fit calculation, framing estimates, SNR area
+computation, and exposure planning. Updated geometry without re-pack
+produces stale planning values.
+
+Re-pack scope: only objects receiving new geometry in this pass.
+Full re-pack of unchanged SURFACE objects is not required.
+
+## Priority Order for Execution
+
+1. SNR — pilot class anomaly, 109 objects, investigate root cause first
+2. PN — Gate A anomaly, 542 objects
+3. EN — largest planning impact class, 10,051 objects
+4. RN — 1,141 objects
+5. WR — 1,586 objects
+6. DN — 18,502 objects (Dobashi primary source)
+7. Galaxy classes (G, Gxy, GxyP, GxyG) — NED/HyperLeda pass
+
+## SNR Anomaly Investigation
+
+109 SNR objects at SURFACE with no geometry requires root cause analysis
+before enrichment pass executes. SNR pilot packing (Part XXXIX) required
+Gate A (geometry) as mandatory. These objects should not have reached SURFACE
+without geometry. Possible causes:
+
+- Late promotion outside the pilot packing pipeline
+- Gate A bypass during a schema migration event
+- geometry_mode not set correctly for a subset
+
+Jim to run:
+```sql
+SELECT primary_id, simbad_otype, source_origin, geometry_mode
+FROM public.objects
+WHERE layer = 'SURFACE'
+AND skypix_object_class = 'SNR'
+AND major_axis_arcsec IS NULL
+LIMIT 20;
+```
+
+Report findings before SNR geometry enrichment begins.
+
+---
+
+LDD VERSION: 2026-03-21-A  |  PARTS: XL–LV  |  VERIFY: BROADBAND-PATH-LOCKED
 ```
 
 ---
