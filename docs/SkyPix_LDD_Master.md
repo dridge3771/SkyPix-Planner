@@ -3,7 +3,7 @@ SKYPIX LIVING DESIGN DOCUMENT
 PROJECT BOOT & CONTINUITY PROTOCOL
 ============================================================
 
-LDD VERSION: 2026-03-21-A  |  PARTS: XL–LIV  |  VERIFY: BROADBAND-PATH-LOCKED
+LDD VERSION: 2026-03-26-A  |  PARTS: XL–LVI  |  VERIFY: BROADBAND-PATH-LOCKED
 
 ROLE OF THIS DOCUMENT
 This LDD is executable project context. It replaces prior conversations.
