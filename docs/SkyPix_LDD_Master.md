@@ -7624,7 +7624,341 @@ Report findings before SNR geometry enrichment begins.
 
 ---
 
-LDD VERSION: 2026-03-21-A  |  PARTS: XL–LV  |  VERIFY: BROADBAND-PATH-LOCKED
+---
+<!-- BEGIN PART LVI -->
+
+# PART LVI — UI LAYOUT CANON & SKYVU SCREEN SPECIFICATION (LOCKED 2026-03-19)
+
+---
+Section 259 — SURFACE Geometry Enrichment Pass (LOCKED 2026-03-19)
+
+Background:
+
+A geometry audit conducted 2026-03-19 revealed 53,071 SURFACE objects with
+major_axis_arcsec IS NULL. Breakdown by class:
+
+| Class | No-size count | Notes |
+|-------|--------------|-------|
+| DN    | 18,502 | Dark nebulae — geometry should exist |
+| EN    | 10,051 | Emission nebulae — packing gate anomaly |
+| GxyP  |  8,548 | Galaxy pairs — complex but some geometry expected |
+| OC    | 11,860 | EXEMPT — bulk promotion doctrine, no geometry gate |
+| WR    |  1,586 | Wolf-Rayet shells |
+| RN    |  1,141 | Reflection nebulae |
+| PN    |    542 | Planetary nebulae — Gate A anomaly |
+| G     |    507 | Galaxies |
+| Gxy   |    124 | Galaxies |
+| SNR   |    109 | ANOMALY — pilot class, geometry was mandatory |
+| GxyG  |    100 | Galaxy groups |
+| GC    |      1 | Globular cluster |
+
+OC exempt by doctrine (Section 56.3 — bulk promotion, no geometry gate).
+Enrichment target population: ~41,211 objects (all SURFACE no-size, OC excluded).
+
+Holding audit results (same session):
+- 85,048 HOLDING objects: all have presence_mask, 85,040 have otype (8 missing)
+- 84,700 of 84,740 RAW objects have no size — coordinate+identity population, correct by doctrine
+- 53,071 of 88,190 SURFACE objects have no size — enrichment pass required for non-OC classes
+
+Geometry sources (priority order):
+1. SIMBAD TAP — broadest coverage, first pass for all classes
+2. NED — galaxies, galaxy groups
+3. HyperLeda — galaxies, morphology + size
+4. Green SNR catalog (VII/272) — SNR
+5. V/84 Strasbourg-ESO PN — PN
+6. Dobashi (2011) — DN
+
+Pass architecture:
+- Query SIMBAD TAP by simbad_otype batch — not object by object
+- Write major_axis_arcsec, minor_axis_arcsec (if available), position_angle_deg (if available)
+- Set geometry_mode: GEO3 (all three axes) or GEO2 (major only)
+- Escalate to class-specific source if SIMBAD returns nothing
+- Log failures — objects with no geometry from any source remain SURFACE, flagged
+- Geometry update on SURFACE object triggers payload re-pack for that object only
+
+Execution priority:
+0. SNR — investigate root cause before enrichment (mandatory prerequisite)
+1. PN — Gate A anomaly, investigate alongside SNR
+2. EN — largest planning impact
+3. RN
+4. WR
+5. DN — Dobashi primary source
+6. G / Gxy / GxyP / GxyG — NED + HyperLeda pass
+
+SNR anomaly investigation query:
+```sql
+SELECT primary_id, simbad_otype, source_origin, geometry_mode
+FROM public.objects
+WHERE layer = 'SURFACE'
+AND skypix_object_class = 'SNR'
+AND major_axis_arcsec IS NULL
+LIMIT 20;
 ```
+
+Do NOT demote any object from SURFACE. Do NOT infer geometry from associations.
+Do NOT begin enrichment code before SNR anomaly is investigated and reported.
+
+Target population query:
+```sql
+SELECT primary_id, skypix_object_class, simbad_otype, ra_deg, dec_deg
+FROM public.objects
+WHERE layer = 'SURFACE'
+AND major_axis_arcsec IS NULL
+AND skypix_object_class NOT IN ('OC')
+ORDER BY skypix_object_class;
+```
+
+---
+Section 260 — Global Screen Geometry (LOCKED 2026-03-19)
+
+Window: 1920 × 1080 fixed fullscreen.
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  TOP STRIP — 40px — Global navigation tabs                           │
+├────────┬────────────────────────────────────────────────┬────────────┤
+│        │                                                │            │
+│  LEFT  │         FUNCTIONAL PANEL                       │  SkyVu     │
+│  STRIP │         720 px                                 │  VIEWPORT  │
+│  80px  │                                                │  1080×1080 │
+│ Planner│                                                │            │
+│  tabs  │                                                │   RIGHT    │
+│        │                                                │   STRIP    │
+│        │                                                │   40px     │
+├────────┴────────────────────────────────────────────────┴────────────┤
+│  BOTTOM STRIP — 40px — Context tabs (hardware or SkyVu/Exposure)     │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+Strip dimensions:
+
+| Strip | Width/Height | Role |
+|-------|-------------|------|
+| Top | 40px height | Global navigation — always visible |
+| Left | 80px width | Planner tabs (SkyVu modules) or absent (Rigs/Cameras/Filters) |
+| Right | 40px width | SkyVu layer tabs |
+| Bottom | 40px height | Hardware tabs (Rigs/Cameras/Filters) or SkyVu/Exposure toggle |
+| Functional panel | 720px width | Object data, specs, left-side UI |
+| SkyVu viewport | 1080×1080px | Dome renderer |
+
+Width check: 80 + 720 + 1080 + 40 = 1920 ✅
+
+---
+Section 261 — Global Navigation Strip (LOCKED 2026-03-19)
+
+Top strip — present on all pages, always visible, 40px height.
+
+Tabs: Setup | Rigs | Cameras | Filters | Discovery | Objects | Planners
+
+Active tab: high-contrast highlight (#4a86e8 blue background, white text).
+Inactive tabs: contextual grouping colors.
+Pill-shaped tabs, 12px border radius, 11px bold font.
+SkyPix logo icon (50×50px bounding box) at top left — triggers system context menu.
+
+---
+Section 262 — Left Strip — Planner Tabs (LOCKED 2026-03-19)
+
+Width: 80px.
+Text: horizontal (not rotated).
+Line wrap: maximum two lines.
+Planner name maximum: 20 characters.
+Tab height: auto — single line (~30px) for names ≤ ~11 chars, two lines (~50px) for longer names.
+
+Present on: Discovery, Objects, Planners modules (SkyVu-enabled).
+Absent on: Rigs, Cameras, Filters, Setup.
+
+Tab color states:
+
+| State | Color |
+|-------|-------|
+| Default | Unlit / neutral |
+| Active planner | Green |
+| Active planner + highlighted object already assigned | Green + small filled dot |
+| Non-active planner containing highlighted object | Orange |
+
+Dot appears only on green tab. Orange and green are mutually exclusive per tab.
+One green tab at a time.
+
+Planner tabs are the destination for object assignment from Discovery, Objects,
+and Planners modules. Object list in functional panel + planner tabs on left =
+short gesture, minimal eye travel.
+
+---
+Section 263 — Bottom Strip (LOCKED 2026-03-19)
+
+Height: 40px. Width: full page width within left/right strips.
+
+Behavior depends on active module:
+
+Rigs module:
+- Tabs: one per saved rig — rapid rig switching
+- Painted 50% opacity wash of rig color
+
+Cameras module:
+- Tabs: one per saved camera — rapid camera switching
+
+Filters module:
+- Tabs: one per saved filter — rapid filter switching
+
+Discovery / Objects / Planners modules:
+- Two tabs only: SkyVu | Exposure
+- Mutually exclusive display toggle
+- SkyVu = dome renderer active
+- Exposure = SNR calculations, filter sequencing, sub estimates active
+- These never coexist
+
+---
+Section 264 — Right Strip — SkyVu Layer Tabs (LOCKED 2026-03-19)
+
+Width: 40px.
+Text: rotated 90°.
+Gamma bead on interior side of tab, beneath text.
+Bead slides in visual slot on wire — up = more gamma, down = less.
+Physical bead range proportional to adjustment range required.
+Wide gamma range tabs: Constellations, Milky Way.
+Narrow gamma range tabs: O, A, B0, B1, B2.
+
+Present only when SkyVu is active (Discovery and Planners modules).
+
+Discovery SkyVu layer stack (top to bottom render order — z-order Cathy to specify):
+
+| Layer | Notes |
+|-------|-------|
+| Found | Ctrl+F search results — topmost |
+| B2 | TPF ionizing star context |
+| B1 | TPF ionizing star context |
+| B0 | TPF ionizing star context |
+| A | Stellar illumination context |
+| O | Stellar illumination context |
+| Constellations | IAU 3-char; wide gamma range |
+| Milky Way | Structural context |
+| W3 | WISE W3 dust |
+| Hα | Primary discovery terrain |
+
+Planners SkyVu layer stack:
+
+| Layer | Notes |
+|-------|-------|
+| Assigned | Active planner objects |
+| Constellations | Wide gamma range |
+| Milky Way | Structural context |
+| Ha | Emission context |
+| W3 | Dust context |
+| Lunar | Corridor, occlusion cone, stadium, annotations |
+
+---
+Section 265 — Planners Schema (LOCKED 2026-03-19)
+
+```sql
+CREATE TABLE planners (
+    planner_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    planner_name    TEXT NOT NULL CHECK(length(planner_name) <= 20),
+    rig_id          INTEGER NOT NULL REFERENCES rig_kit(rig_id),
+    notes           TEXT,
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE planner_objects (
+    planner_id   INTEGER REFERENCES planners(planner_id) ON DELETE CASCADE,
+    sud_id       INTEGER REFERENCES object_database(sud_id) ON DELETE CASCADE,
+    sort_order   INTEGER,
+    assigned_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (planner_id, sud_id)
+);
+```
+
+Planner creation fields (UI):
+- Planner Name — text field, 20 characters maximum, becomes left strip tab label
+- Rig Name — dropdown populated from rig_kit, NOT free text
+
+rig_id is NOT NULL — no planner may exist without a rig association.
+This is enforced at schema level and UI level (dropdown only, no free text).
+
+Planner type (Seasonal / Project) is NOT a schema field.
+Planner use pattern is determined by the user, not enforced by the system.
+Date range is NOT a creation field — implicit from contained objects.
+
+planner_abbrev eliminated — planner_name serves both display and tab label purposes.
+
+---
+Section 266 — Discovery Module Screen Spec (LOCKED 2026-03-19)
+
+Projection: dome — zenith at viewport centre. Single renderer across all SkyVu modules.
+
+Search dialog invocation: Ctrl+F / Cmd+F — keyboard only, within Discovery module only.
+State: persistent across sessions. Reset button clears all fields to defaults.
+
+Search dialog parameters:
+
+| Parameter | Type | Notes |
+|-----------|------|-------|
+| Band | Checkbox matrix | Required / Allowed / Not Allowed / Dominant / Diminutive |
+| RA range | Min / Max | |
+| Dec range | Min / Max | Signed — southern targets supported |
+| Size | Min AND Max (arcmin) | Both bounds |
+| Object class | Checkbox list | |
+| Otype | Text / checkbox | SIMBAD otype — advanced users |
+| PA | Range | Position angle — rig rotator context |
+| FOV fit | Auto-flag | Checks active rig FOV automatically |
+| Already in SUD | Radio: Include / Exclude / Only | |
+| Already committed | Radio: Include / Exclude / Only | |
+| Confidence tier | Checkbox: L0 / L1 / L2 / L3 | |
+| Surface brightness | Min / Max | |
+
+Found layer population: Ctrl+F search results only. Not the full SCD universe.
+
+Object ID painted orange in Found layer if object already exists in active planner.
+
+Transfer/Assign workflow:
+- Gesture: highlight object → touch planner tab on left strip
+- If object already in SUD: Assign only
+- If object new to SUD: Transfer (SCD→SUD) + Assign, atomic
+- Duplicate protection at both SUD and planner_objects level
+- Multi-select + single tab = batch operation
+
+Transfer warnings (non-blocking — user always permitted to proceed):
+- RAW: "Object geometry unconfirmed. Size and FOV estimates may be unreliable. Accept anyway?"
+- HOLDING: "Object is physically marginal — geometry unconfirmed, may be unresolvable at typical focal lengths. Accept anyway?"
+- Quarantine: "User generated object. No planning data validated. Accept anyway?"
+
+Right panel toggle (SkyVu active):
+- Found layer highlighted: dome ↔ Spectra detail (band flux + confidence)
+
+---
+Section 267 — Planners Module Screen Spec (LOCKED 2026-03-19)
+
+Projection: dome — same renderer core as Discovery.
+
+Right panel toggle states:
+- Assigned layer highlighted: dome ↔ Imaging data (band flux, filter exposures, subframe length, limitations)
+- Found layer highlighted (Ctrl+F against SUD): dome ↔ Spectra detail (band flux + confidence)
+
+Ctrl+F in Planners module: scans SUD only (not SCD).
+
+Found layer in Planners: populated by Ctrl+F SUD search. Object ID painted orange if already in active planner.
+
+Planner-to-planner transfer:
+- Gesture: highlight object in active planner → touch destination planner tab
+- Assignment table updated — SUD entry unchanged
+
+---
+Section 268 — SkyVu / Exposure Toggle (LOCKED 2026-03-19)
+
+Bottom strip in Discovery / Objects / Planners modules contains two tabs:
+
+SkyVu | Exposure
+
+Mutually exclusive. One always active.
+
+SkyVu: dome renderer fills right panel.
+Exposure: SNR calculations, filter sequencing, sub estimates fill right panel. SkyVu not visible.
+
+These are display states, not module switches. Active planner context, object selection, and layer state are preserved when toggling.
+
+---
+<!-- END PART LVI -->
+
+LDD VERSION: 2026-03-26-A  |  PARTS: XL–LVI  |  VERIFY: BROADBAND-PATH-LOCKED
+
 
 ---
