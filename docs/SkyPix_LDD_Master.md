@@ -3,7 +3,7 @@ SKYPIX LIVING DESIGN DOCUMENT
 PROJECT BOOT & CONTINUITY PROTOCOL
 ============================================================
 
-LDD VERSION: 2026-03-26-A  |  PARTS: XL–LVI  |  VERIFY: BROADBAND-PATH-LOCKED
+LDD VERSION: 2026-03-28-A  |  PARTS: XL–LVI  |  VERIFY: BROADBAND-PATH-LOCKED
 
 ROLE OF THIS DOCUMENT
 This LDD is executable project context. It replaces prior conversations.
@@ -7958,7 +7958,126 @@ These are display states, not module switches. Active planner context, object se
 ---
 <!-- END PART LVI -->
 
-LDD VERSION: 2026-03-26-A  |  PARTS: XL–LVI  |  VERIFY: BROADBAND-PATH-LOCKED
+---
+Section 278 — Objects/Discovery Right Panel: Emission Profile & Transit Matrix (LOCKED 2026-03-28)
+---
+278.1 — Right Panel Layout (LOCKED)
+Total right panel width: 1120px (not 1080px — right tab strip is behind SkyVu overlay).
+Split:
+Emission Profile: 400px (8 bands × 50px each)
+Home Site Transit Matrix: 720px (12 months × 60px each)
+SkyVu overlays the full 1120px × 1080px when toggled. No header rows visible
+under SkyVu. Toggle via bottom strip, same pattern as Planners.
+---
+278.2 — Emission Profile Band Order (LOCKED)
+Eight bands in display order (left to right), following presence_mask sequence:
+Cont · OII · Hβ · NII · Hα · OIII · SII · IR
+Column width: 50px each × 8 = 400px.
+---
+278.3 — Emission Profile Cell Content (LOCKED)
+Two rows per object set (minimum 2 rows per object, matching left panel):
+Row 0 — Relative band strength:
+Value: 0–100, normalized to Hα=100
+Font: matching filter name font size (13px)
+Hα=100 is the reference anchor for all band comparisons
+Row 1 — Rayleigh flux value:
+Format: NNNN or Nx10^6 (whichever is appropriate to magnitude)
+Font: smaller, matching Subframe Length / Total Exposure size
+Blank / — if value unavailable (null-tolerant)
+Sources: literature, measured, or LFU only
+---
+278.4 — Confidence Shading (LOCKED)
+Same opacity scale as Planners right panel confidence paint:
+L3: 40% · L2: 30% · L1: 20% · L0: 10% · L-/SAWAG: 0%
+Applied to BOTH rows (strength and flux) independently per band per object.
+Shading color: user-defined in Setup (parameter TBD — not yet coded).
+Single color family applied consistently to emission confidence shading
+AND transit matrix intensity shading to avoid introducing multiple
+color languages.
+---
+278.5 — Hα-Absent Display Rule (LOCKED)
+Condition: object has Hα=0 (e.g., PN, WR class dominated by OIII/Hβ).
+Display behavior:
+Strongest present band promoted to 100 (replaces Hα=100 normalization)
+⚠ hazard triangle displayed under the value in ALL band cells for that object
+Confidence shading applied independently — ⚠ and shading are orthogonal signals
+Semantic distinction:
+Confidence shading = data quality of the value itself
+⚠ triangle = reference band absent; cross-object comparison not valid for this object
+A cell may carry both signals simultaneously (e.g., high-confidence OIII
+value at 40% shade WITH ⚠ because Hα=0).
+---
+278.6 — ha_absent Flag (LOCKED)
+`ha_absent` boolean is supplied per object by Cathy's SNR engine.
+Display layer consumes it to trigger ⚠ triangle.
+Display layer does NOT derive this condition independently.
+---
+278.7 — Hα-Absent Rayleigh Inference (LOCKED — Cathy task)
+For Hα-absent objects with known v_mag, angular size, and class:
+Derive estimated Rayleigh values using class-specific spectral templates
+Priority classes: PN (highest), WR (second)
+Confidence ceiling: L0 maximum — never L1 or above for inferred values
+Dead end: if v_mag null AND no flux anchor → blank/—, confidence L-
+Template sources to be documented by Cathy per class
+See task brief: cathy_brief_ha_absent_rayleigh.md
+---
+278.8 — Transit Matrix Cell Content (LOCKED)
+Two rows per object set:
+Row 0 — Rising OR Transit time:
+Format: HH:MM
+Rising vs Transit: rig kit parameter (per-rig setting, not global)
+Driven by seasonality_rig_id (Setup parameter — not yet coded)
+Row 1 — Total visible time for the night:
+Cumulative observable hours whether one arc or two (split arc summed)
+Format: H:MM or decimal hours (TBD)
+Computed from rig's dec band RHA/SHA against dark convention window
+---
+278.9 — Transit Matrix Pre-computation (LOCKED — Jim task)
+At object entry into SUD, compute and store transit/rise times and
+observable hours for ALL user rigs into separate per-rig tables.
+Rationale: rig-switch display is a data dump, not a recalc.
+Load is front-loaded at object entry, not at display time.
+Typical user scope: 200–500 objects × 3–5 rigs.
+Tables keyed by: object_id × rig_id × month.
+---
+278.10 — Transit Matrix Shading (LOCKED)
+Same 3.3%-per-missing-day formula as Planners transit shading:
+100% for months fully visible
+100% − (3.3% × days not visible) for margin months
+Shading color: same user-defined Setup color as emission confidence
+Seasonal shading rig source: seasonality_rig_id (Setup parameter).
+Discovery module: NO shading — objects are SCD provisional candidates,
+no rig context committed. Transit times displayed unshaded.
+Objects module: full shading per seasonality_rig_id.
+---
+278.11 — URL Enrichment Procedure (LOCKED — Jim task)
+Scope: SURFACE tier objects only.
+Columns populated (three URL columns on object_database, Sections 269–270):
+url_1 — NASA (apod.nasa.gov or hubblesite.org)
+url_2 — AstroBin gallery page (via Google index — no AstroBin API contact)
+url_3 — Wikipedia Commons image (fallback)
+Source priority: NASA → AstroBin → Wikipedia.
+Null-tolerant: missing URL leaves N/AB/U display tokens inactive. No blocking.
+AstroBin method: Google targeted query (site:astrobin.com "<object_id>")
+returns gallery URL without hitting AstroBin's server or rate limits.
+Trigger: URL enrichment runs as a step within the existing HOLDING→SURFACE
+promotion routine. Co-transactional with tier change. Not a separate job.
+Re-validation: separate lightweight pass, schedule TBD.
+Enrichment date stored in metadata column (enrichment_date) for targeting.
+---
+278.12 — L- / SAWAG Confidence Tier (LOCKED)
+L- and SAWAG are synonymous — two representations of the same tier:
+L- = pictogram (the side-arm pitcher: L=body, -=arm extended)
+SAWAG = plain English (Side-Arm Wild-Ass Guess)
+Definition: below L0. No reliable assessment. You're on your own.
+0% confidence paint. Invisible to SNR engine. Excluded from all calculations.
+Quarantine path for user-supplied objects:
+Quarantine → minimal validation pass → L- → user images it →
+SEA badge → LFU update → V2 commit → L0 promotion candidate.
+L- is NOT the same as SAWAG-assessed objects that made it to L0.
+L- means pre-assessment. No call has been made at all.
+---
+LDD VERSION: 2026-03-28-A  |  PARTS: XL–LVI  |  VERIFY: BROADBAND-PATH-LOCKED
 
 
 ---
